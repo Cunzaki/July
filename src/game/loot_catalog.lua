@@ -40,6 +40,49 @@ M.LOOT_TYPES = {
 M.LOOT_FALLBACK = { key = "loot_other", display = "Other Loot", color = { 0.8, 0.8, 0.8, 1.0 } }
 M.BODY_BAG_TYPE = { key = "loot_body_bag", display = "Body Bag", color = { 0.35, 0.35, 0.35, 1.0 } }
 
+M.MULTICOMBO_ENTRIES = {}
+M.MULTICOMBO_LABELS = {}
+M.MULTICOMBO_DEFAULTS = {}
+M.KEY_TO_INDEX = {}
+
+local function rebuild_multicombo()
+    M.MULTICOMBO_ENTRIES = {}
+    M.MULTICOMBO_LABELS = {}
+    M.MULTICOMBO_DEFAULTS = {}
+    M.KEY_TO_INDEX = {}
+
+    for i = 1, #M.LOOT_TYPES do
+        M.MULTICOMBO_ENTRIES[#M.MULTICOMBO_ENTRIES + 1] = M.LOOT_TYPES[i]
+        M.MULTICOMBO_LABELS[#M.MULTICOMBO_LABELS + 1] = M.LOOT_TYPES[i].display
+        M.MULTICOMBO_DEFAULTS[#M.MULTICOMBO_DEFAULTS + 1] = false
+        M.KEY_TO_INDEX[M.LOOT_TYPES[i].key] = #M.MULTICOMBO_ENTRIES
+    end
+
+    M.MULTICOMBO_ENTRIES[#M.MULTICOMBO_ENTRIES + 1] = M.LOOT_FALLBACK
+    M.MULTICOMBO_LABELS[#M.MULTICOMBO_LABELS + 1] = M.LOOT_FALLBACK.display
+    M.MULTICOMBO_DEFAULTS[#M.MULTICOMBO_DEFAULTS + 1] = false
+    M.KEY_TO_INDEX[M.LOOT_FALLBACK.key] = #M.MULTICOMBO_ENTRIES
+
+    M.MULTICOMBO_ENTRIES[#M.MULTICOMBO_ENTRIES + 1] = M.BODY_BAG_TYPE
+    M.MULTICOMBO_LABELS[#M.MULTICOMBO_LABELS + 1] = M.BODY_BAG_TYPE.display
+    M.MULTICOMBO_DEFAULTS[#M.MULTICOMBO_DEFAULTS + 1] = false
+    M.KEY_TO_INDEX[M.BODY_BAG_TYPE.key] = #M.MULTICOMBO_ENTRIES
+end
+
+rebuild_multicombo()
+
+function M.is_enabled(vals, category)
+    if type(vals) ~= "table" then return false end
+    local idx = M.KEY_TO_INDEX[category and category.key]
+    if not idx then return false end
+    return vals[idx] == true
+end
+
+function M.get_color(category)
+    if category and category.color then return category.color end
+    return { 1, 1, 1, 1 }
+end
+
 local function name_matches(name, pattern)
     if type(pattern) == "table" then
         for i = 1, #pattern do

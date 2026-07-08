@@ -30,7 +30,8 @@ docs/
 July_Config.txt
 HavocESP_Config.txt
 
-# Editor / local env
+# Generated asset reports
+assets/decals/download_report.json
 *.local
 .env
 .env.*

@@ -1,4 +1,5 @@
 local constants = July.require("core.constants")
+local settings = July.require("core.settings")
 local color_util = July.require("core.color_util")
 local draw_util = July.require("core.draw_util")
 local entity_scan = July.require("game.entity_scan")
@@ -7,8 +8,37 @@ local M = {}
 
 local frame_counter = 0
 
+local DISPLAY = {
+    box = 1,
+    fill = 2,
+    name = 3,
+    dist = 4,
+    held_item = 5,
+    npc_type = 6,
+    health_bar = 7,
+    health_text = 8,
+    chams = 9,
+    skeleton = 10,
+}
+
+local NPC_COLORS = {
+    box = { 1.0, 1.0, 1.0, 1.0 },
+    fill = { 1.0, 1.0, 1.0, 0.35 },
+    name = { 0.92, 0.92, 0.92, 1.0 },
+    dist = { 0.67, 0.67, 0.67, 1.0 },
+    held_item = { 1.0, 0.85, 0.4, 1.0 },
+    npc_type = { 1.0, 0.5, 0.0, 0.85 },
+    health_text = { 0.3, 1.0, 0.4, 1.0 },
+    chams = { 1.0, 0.2, 0.2, 0.55 },
+    skeleton = { 1.0, 1.0, 1.0, 1.0 },
+}
+
 function M.set_frame_counter(n)
     frame_counter = n
+end
+
+local function display_on(vals, idx)
+    return type(vals) == "table" and vals[idx] == true
 end
 
 local function get_npc_type(entity_name)
@@ -45,68 +75,45 @@ local function get_held_item_name(ent)
 end
 
 function M.render(cam_pos)
-    if not menu.Get("havoc_npc_enabled") then return end
+    if not settings.enabled("havoc_npc_enabled") then return end
 
     local entity_cache = entity_scan.get_cache()
     if #entity_cache == 0 then return end
 
-    local ent_rgb = menu.Get("havoc_npc_rainbow") and color_util.rainbow_color(0.4) or nil
+    local display = settings.get("havoc_npc_display", {})
+    local ent_rgb = settings.bool("havoc_npc_rainbow", false) and color_util.rainbow_color(0.4) or nil
 
-    local opts = {
-        box = menu.Get("havoc_npc_box"),
-        box_style = menu.Get("havoc_npc_box_style"),
-        box_color = ent_rgb or menu.GetColor("havoc_npc_box"),
-        box_fill = menu.Get("havoc_npc_box_fill"),
-        box_fill_color = ent_rgb or menu.GetColor("havoc_npc_box_fill"),
-        name = menu.Get("havoc_npc_name"),
-        name_color = ent_rgb or menu.GetColor("havoc_npc_name"),
-        dist = menu.Get("havoc_npc_distance"),
-        dist_color = ent_rgb or menu.GetColor("havoc_npc_distance"),
-        health_bar = menu.Get("havoc_npc_health_bar"),
-        health_text = menu.Get("havoc_npc_health_text"),
-        health_text_color = ent_rgb or menu.GetColor("havoc_npc_health_text"),
-    }
+    local box_on = display_on(display, DISPLAY.box)
+    local fill_on = display_on(display, DISPLAY.fill)
+    local name_on = display_on(display, DISPLAY.name)
+    local dist_on = display_on(display, DISPLAY.dist)
+    local held_on = display_on(display, DISPLAY.held_item)
+    local type_on = display_on(display, DISPLAY.npc_type)
+    local health_bar_on = display_on(display, DISPLAY.health_bar)
+    local health_text_on = display_on(display, DISPLAY.health_text)
+    local chams_on = display_on(display, DISPLAY.chams)
+    local skeleton_on = display_on(display, DISPLAY.skeleton)
 
-    local chams_on = menu.Get("havoc_npc_chams")
-    local chams_color = ent_rgb or menu.GetColor("havoc_npc_chams")
-    local skeleton_on = menu.Get("havoc_npc_skeleton")
-    local skeleton_color = ent_rgb or menu.GetColor("havoc_npc_skeleton")
-    local held_item_on = menu.Get("havoc_npc_held_item")
-    local held_item_color = ent_rgb or menu.GetColor("havoc_npc_held_item")
-    local npc_type_on = menu.Get("havoc_npc_npc_type")
-    local npc_type_color = ent_rgb or menu.GetColor("havoc_npc_npc_type")
-    local name_size = menu.Get("havoc_npc_name_size")
-    local health_text_size = menu.Get("havoc_npc_health_text_size")
-    local held_item_size = menu.Get("havoc_npc_held_item_size")
-    local dist_size = menu.Get("havoc_npc_distance_size")
-    local npc_type_size = menu.Get("havoc_npc_npc_type_size")
+    local box_style = settings.num("havoc_npc_box_style", 0)
+    local chams_style = settings.num("havoc_npc_chams_style", 0)
+    local hide_dead = settings.bool("havoc_npc_hide_dead", false)
+    local max_dist = settings.num("havoc_npc_max_distance", 3000)
 
-    local hide_dead = menu.Get("havoc_npc_hide_dead")
-    local max_dist = menu.Get("havoc_npc_max_distance")
+    local name_size = settings.num("havoc_npc_name_size", 13)
+    local health_text_size = settings.num("havoc_npc_health_text_size", 8)
+    local held_item_size = settings.num("havoc_npc_held_item_size", 10)
+    local dist_size = settings.num("havoc_npc_distance_size", 10)
+    local npc_type_size = settings.num("havoc_npc_npc_type_size", 9)
 
-    local needs_full_bounds = opts.box and opts.box_style == 2
-    local chams_style = menu.Get("havoc_npc_chams_style")
+    local needs_full_bounds = box_on and box_style == 2
 
     local esp_opts = {
-        box = needs_full_bounds and false or opts.box,
-        box_style = opts.box_style,
-        box_color = opts.box_color,
-        box_fill = opts.box_fill,
-        box_fill_color = opts.box_fill_color,
-        name = opts.name,
-        name_color = opts.name_color,
-        dist = opts.dist,
-        dist_color = opts.dist_color,
-        health_bar = opts.health_bar,
-        health_text = opts.health_text,
-        health_text_color = opts.health_text_color,
-        npc_type_on = npc_type_on,
-        npc_type_color = npc_type_color,
-        name_size = name_size or 13,
-        health_text_size = health_text_size or 8,
-        held_item_size = held_item_size or 10,
-        dist_size = dist_size or 10,
-        npc_type_size = npc_type_size or 9,
+        box_style = box_style,
+        name_size = name_size,
+        health_text_size = health_text_size,
+        held_item_size = held_item_size,
+        dist_size = dist_size,
+        npc_type_size = npc_type_size,
     }
 
     for i = 1, #entity_cache do
@@ -131,9 +138,16 @@ function M.render(cam_pos)
                         end
                         local bounds = draw_util.get_entity_bounds(part_pos, ent.part_size, root_pos)
                         sc.x = bounds.x; sc.y = bounds.y; sc.w = bounds.w; sc.h = bounds.h; sc.valid = bounds.valid
-                        if chams_on and bounds.valid then draw_util.draw_entity_chams(part_pos, ent.part_size, chams_color, chams_style) end
-                        if skeleton_on and bounds.valid then draw_util.draw_entity_skeleton(part_pos, skeleton_color) end
-                        if needs_full_bounds and bounds.valid then draw_util.draw_entity_3d_box(part_pos, ent.part_size, opts.box_color) end
+
+                        if chams_on and bounds.valid then
+                            draw_util.draw_entity_chams(part_pos, ent.part_size, ent_rgb or NPC_COLORS.chams, chams_style)
+                        end
+                        if skeleton_on and bounds.valid then
+                            draw_util.draw_entity_skeleton(part_pos, ent_rgb or NPC_COLORS.skeleton)
+                        end
+                        if needs_full_bounds and bounds.valid then
+                            draw_util.draw_entity_3d_box(part_pos, ent.part_size, ent_rgb or NPC_COLORS.box)
+                        end
                     elseif do_update then
                         local bounds = draw_util.get_entity_bounds_fallback(root_pos)
                         sc.x = bounds.x; sc.y = bounds.y; sc.w = bounds.w; sc.h = bounds.h; sc.valid = bounds.valid
@@ -141,10 +155,23 @@ function M.render(cam_pos)
 
                     if sc.valid then
                         local name_str = ent.model.Name
+                        esp_opts.box = box_on
+                        esp_opts.box_color = ent_rgb or NPC_COLORS.box
+                        esp_opts.box_fill = fill_on
+                        esp_opts.box_fill_color = ent_rgb or NPC_COLORS.fill
+                        esp_opts.name = name_on
+                        esp_opts.name_color = ent_rgb or NPC_COLORS.name
+                        esp_opts.dist = dist_on
+                        esp_opts.dist_color = ent_rgb or NPC_COLORS.dist
+                        esp_opts.health_bar = health_bar_on
+                        esp_opts.health_text = health_text_on
+                        esp_opts.health_text_color = ent_rgb or NPC_COLORS.health_text
+                        esp_opts.npc_type_on = type_on
+                        esp_opts.npc_type_color = ent_rgb or NPC_COLORS.npc_type
                         esp_opts.health = health
                         esp_opts.max_health = max_health
-                        esp_opts.held_item = held_item_on and get_held_item_name(ent) or nil
-                        esp_opts.held_item_color = held_item_color
+                        esp_opts.held_item = held_on and get_held_item_name(ent) or nil
+                        esp_opts.held_item_color = ent_rgb or NPC_COLORS.held_item
                         esp_opts.npc_type = get_npc_type(name_str)
 
                         draw_util.draw_esp({ x = sc.x, y = sc.y, w = sc.w, h = sc.h, valid = true }, name_str, dist, esp_opts)

@@ -1,22 +1,18 @@
 # July
 
-**July** is a [Project Vector](https://project-vector-1.gitbook.io/vector-lua-engine/) script for **Havoc** on Roblox.
+**July** is a [Project Vector](https://project-vector-1.gitbook.io/vector-lua-engine/) script for **Havoc** on Roblox (place `16530963934`).
 
-NPC ESP, loot ESP, trap ESP, aimbot, weapon mods, and config save/load — all from one loadstring.
+NPC ESP, loot ESP, trap ESP, aimbot, silent aim, weapon mods, and config save/load — all from one loadstring.
 
 ---
 
 ## Quick load
 
-Paste this in Vector and execute:
-
 ```lua
 utility.load_url("https://raw.githubusercontent.com/Cunzaki/July/refs/heads/main/july.lua")
 ```
 
-Or run [`load.lua`](load.lua) from this repo.
-
-Open the menu: **Scripts → July**
+Menu: **Scripts → July**
 
 ---
 
@@ -24,63 +20,37 @@ Open the menu: **Scripts → July**
 
 | Category | What's included |
 |----------|-----------------|
-| **Combat** | NPC aimbot (head/torso), FOV circle, target line, target lock |
-| **NPC Visuals** | Box (corners/outline/3D), chams, skeleton, health, names, held item, type tags |
-| **Loot** | Per-type toggles, distance, markers, locked/open filters |
-| **Traps** | Tripmines, mines, alarms, airstrike, barrels, sentries, toxic gas |
-| **Weapon Mods** | No recoil, no spread, no sway, fast bullet velocity |
-| **Settings** | Config save/load to `C:/July_Config.txt` |
-
----
-
-## Local install
-
-**Option A — loadstring (recommended):** use the snippet above.
-
-**Option B — run from disk:**
-
-```bash
-npm run build
-```
-
-Then load `july.lua` in Vector → **Execute Script**.
+| **Aimbot** | NPC aimbot with FOV, target line, sticky lock |
+| **Silent Aim** | Players + NPCs, wallbang, bullet TP, bullet manip, full filter/target options |
+| **NPC Visuals** | Multi-select display options with per-type default colors |
+| **Loot** | Multi-select loot types dropdown (33+ types) with themed colors |
+| **Traps** | Multi-select trap types with default warning colors |
+| **Weapon Mods** | Multi-select: no recoil, spread, sway, fast velocity |
+| **Config** | Save/load to `C:/July_Config.txt` |
 
 ---
 
 ## Development
 
 ```bash
-npm run build    # bundle src/ → july.lua
+npm run build           # bundle src/ → july.lua
+npm run extract-dump    # parse rbxlx → dump/
+npm run download-missing # pull decal PNGs (rate-limited)
 ```
-
-Edit files under `src/`, rebuild, and push `july.lua` to GitHub so the loadstring stays up to date.
 
 ### Repo layout
 
 | Path | Purpose |
 |------|---------|
-| [`load.lua`](load.lua) | One-line loadstring |
-| [`july.lua`](july.lua) | Bundled runtime script (what users load) |
-| [`src/`](src/) | Modular source |
-| [`scripts/`](scripts/) | Bundle tools |
-
-**Local only (gitignored):** `dump/`, `references/`, `Script 1.lua`, `node_modules/`
-
----
-
-## Requirements
-
-- [Project Vector](https://project-vector-1.gitbook.io/vector-lua-engine/) external
-- Join a Havoc match before enabling combat features
-
----
-
-## Debug
-
-Set `July.debug = true` before or after load to print internal logs.
+| `load.lua` | One-line loadstring |
+| `july.lua` | Bundled runtime |
+| `src/` | Modular source |
+| `scripts/` | Bundle + dump/asset tools |
+| `assets/decals/` | CDN images |
+| `dump/` | Game reference (local, gitignored) |
 
 ---
 
 ## Disclaimer
 
-For educational use. Not affiliated with Project Vector or Havoc. Use at your own risk.
+For educational use. Not affiliated with Project Vector or Havoc.

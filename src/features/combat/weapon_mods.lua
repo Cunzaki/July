@@ -1,15 +1,19 @@
+local settings = July.require("core.settings")
+
 local M = {}
 
+local PATCHES = {
+    { index = 1, patch = { vPunchBase = 0, hPunchBase = 0 } },
+    { index = 2, patch = { spreadReduce = 100 } },
+    { index = 3, patch = { weight = 0, aimWeight = 0, unAimWeight = 0 } },
+    { index = 4, patch = { vel = 100000 } },
+}
+
 function M.apply()
-    local patches = {
-        { id = "havoc_no_recoil", patch = { vPunchBase = 0, hPunchBase = 0 } },
-        { id = "havoc_no_spread", patch = { spreadReduce = 100 } },
-        { id = "havoc_no_sway", patch = { weight = 0, aimWeight = 0, unAimWeight = 0 } },
-        { id = "havoc_fast_vel", patch = { vel = 100000 } },
-    }
-    for i = 1, #patches do
-        if menu.Get(patches[i].id) then
-            pcall(applygc, patches[i].patch)
+    local vals = settings.get("havoc_weapon_mods", {})
+    for i = 1, #PATCHES do
+        if type(vals) == "table" and vals[PATCHES[i].index] then
+            pcall(applygc, PATCHES[i].patch)
         end
     end
 end
