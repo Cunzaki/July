@@ -1,7 +1,6 @@
 local constants = July.require("core.constants")
 local loot_catalog = July.require("game.loot_catalog")
 local trap_types = July.require("game.trap_types")
-local combat_menu = July.require("features.combat.combat_menu")
 
 local M = {}
 M.TAB = constants.TAB
@@ -50,7 +49,7 @@ function M.register_all()
     menu.add_group(TAB, "Silent Aim", 0, true)
 
     menu.add_checkbox(TAB, "Silent Aim", "july_silent_aim", "Enable Silent Aim", false)
-    combat_menu.register_silent_aim(TAB, "Silent Aim", "july_silent_", "july_silent_aim")
+    July.require("features.combat.combat_menu").register_silent_aim(TAB, "Silent Aim", "july_silent_", "july_silent_aim")
     menu.add_checkbox(TAB, "Silent Aim", "july_silent_rainbow", "Rainbow Colors", false, { parent = "july_silent_aim" })
 
     -- ── NPC Visuals ──
