@@ -363,6 +363,11 @@ local function draw_slot(x, y, size, key, piece, style, hint)
         if state == "loading" or state == "none" then
             return
         end
+        if state ~= "failed" then
+            return
+        end
+    elseif piece.asset_id or (piece.name and items.get_image_asset_id(piece.name, piece.variant)) then
+        return
     end
 
     local label = "?"

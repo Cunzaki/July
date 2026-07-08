@@ -1,7 +1,7 @@
 --[[
     July - Havoc for Project Vector
     https://github.com/Cunzaki/July
-    Built: 2026-07-08T09:24:46.267Z
+    Built: 2026-07-08T09:29:17.128Z
 ]]
 
 July = {
@@ -1322,6 +1322,12 @@ function M.decal_url(asset_id)
     )
 end
 
+function M.rbx_asset(asset_id)
+    asset_id = digits(asset_id)
+    if not asset_id then return nil end
+    return "rbxassetid://" .. asset_id
+end
+
 return M
 
 end)()
@@ -1334,16 +1340,25 @@ local M = {}
 
 local keys = {}
 
+local function rbx_asset_url(asset_id)
+    local id = tostring(asset_id or ""):match("(%d+)")
+    if not id or id == "0" then return nil end
+    return "rbxassetid://" .. id
+end
+
 local function url_for(asset_id_or_url)
-    if type(asset_id_or_url) == "string" and asset_id_or_url:find("https://", 1, true) then
+    if type(asset_id_or_url) == "string" and asset_id_or_url:find("://", 1, true) then
         return asset_id_or_url
     end
-    return asset_urls.decal_url(asset_id_or_url)
-        or asset_urls.item_png(asset_id_or_url)
-        or asset_urls.roblox_thumb(asset_id_or_url)
-        or asset_urls.roblox_thumb_legacy(asset_id_or_url)
-        or asset_urls.asset_delivery(asset_id_or_url)
-        or asset_urls.roblox_asset(asset_id_or_url)
+    local asset_id = type(asset_id_or_url) == "number" and tostring(asset_id_or_url)
+        or (type(asset_id_or_url) == "string" and asset_id_or_url:match("^(%d+)$"))
+    if not asset_id or asset_id == "0" then return nil end
+    return rbx_asset_url(asset_id)
+        or asset_urls.decal_url(asset_id)
+        or asset_urls.roblox_thumb(asset_id)
+        or asset_urls.roblox_thumb_legacy(asset_id)
+        or asset_urls.asset_delivery(asset_id)
+        or asset_urls.roblox_asset(asset_id)
 end
 
 function M.ensure(key, asset_id_or_url)
@@ -1366,7 +1381,7 @@ end
 local FALLBACKS = {
     function(entry)
         if not entry.asset_id then return nil end
-        return asset_urls.item_png(entry.asset_id)
+        return rbx_asset_url(entry.asset_id)
     end,
     function(entry)
         if not entry.asset_id then return nil end
@@ -1390,6 +1405,13 @@ local FALLBACKS = {
     end,
 }
 
+local function free_entry_handle(entry)
+    if entry.handle and draw and draw.free_image then
+        pcall(function() draw.free_image(entry.handle) end)
+    end
+    entry.handle = nil
+end
+
 local function try_fallback(entry)
     if not entry.asset_id then return false end
     entry.fallback = (entry.fallback or 0) + 1
@@ -1399,8 +1421,8 @@ local function try_fallback(entry)
     if not fb or fb == entry.url then
         return try_fallback(entry)
     end
+    free_entry_handle(entry)
     entry.url = fb
-    entry.handle = nil
     entry.failed = false
     return true
 end
@@ -1421,7 +1443,11 @@ local function get_handle(key)
             return nil
         end
         entry.failed = true
-        entry.handle = nil
+        free_entry_handle(entry)
+        return nil
+    end
+
+    if draw.image_loaded and not draw.image_loaded(entry.handle) then
         return nil
     end
 
@@ -1450,8 +1476,11 @@ function M.state(key)
             return "loading"
         end
         entry.failed = true
-        entry.handle = nil
+        free_entry_handle(entry)
         return "failed"
+    end
+    if draw and draw.image_loaded and not draw.image_loaded(entry.handle) then
+        return "loading"
     end
     return "ready"
 end
@@ -2751,7 +2780,7 @@ M.by_name = {
     ["MOTR Concealable Reinforced Vest"] = "armor",
     ["MSA Paraclete Plate Carrier"] = "armor",
     ["Mask"] = "face_cover",
-    ["Maska-1SCh \"Voin\" Helmet"] = "face_cover",
+    ["Maska-1SCh \"Voin\" Helmet"] = "helmet",
     ["Maska-1SCh Helmet"] = "helmet",
     ["Maska-1SCh _Voin_ Helmet"] = "helmet",
     ["Military Backpack"] = "backpack",
@@ -2801,6 +2830,8 @@ local WEAPON_CATEGORIES = {
     "Melee",
     "Grenades",
     "Throwable",
+    "Utilities",
+    "Uncategorized",
 }
 
 local function parse_rbx_asset_id(value)
@@ -2841,12 +2872,21 @@ local function get_weapons_info()
     return nil
 end
 
-local function lookup_in_folder(folder, name)
-    if not folder or not name or name == "" then return nil end
-    local child = env.safe_call(function()
-        if folder.FindFirstChild then return folder:FindFirstChild(name) end
+local function find_item_folder(root, name)
+    if not root or not name or name == "" then return nil end
+    return env.safe_call(function()
+        if root.FindFirstChild then
+            local ok, found = pcall(function() return root:FindFirstChild(name, true) end)
+            if ok and found then return found end
+            return root:FindFirstChild(name)
+        end
         return nil
     end)
+end
+
+local function lookup_in_folder(folder, name)
+    if not folder or not name or name == "" then return nil end
+    local child = find_item_folder(folder, name)
     if not child then return nil end
     return read_texture_id(child)
 end
@@ -2856,9 +2896,7 @@ local function lookup_runtime(name, variant)
     if not info then return nil end
 
     if variant and variant ~= "" then
-        local item_folder = env.safe_call(function()
-            return info:FindFirstChild(name)
-        end)
+        local item_folder = find_item_folder(info, name)
         if item_folder then
             local skins = env.find_child(item_folder, "skins")
             local skin_folder = skins and env.safe_call(function()
@@ -2890,7 +2928,7 @@ function M.lookup(name, variant)
         return cached ~= false and cached or nil
     end
 
-    local     asset_id = lookup_runtime(name, variant)
+    local asset_id = lookup_runtime(name, variant)
     if not asset_id then
         asset_id = havoc_catalog.get_asset_id(name, variant)
     end
@@ -2908,8 +2946,10 @@ function M.warm()
     if not info then return 0 end
 
     local count = 0
-    local ok, children = pcall(function() return info:GetChildren() end)
-    if ok and children then
+    local function warm_folder(folder)
+        if not folder then return end
+        local ok, children = pcall(function() return folder:GetChildren() end)
+        if not ok or not children then return end
         for i = 1, #children do
             local child = children[i]
             if child.ClassName == "Folder" then
@@ -2917,28 +2957,14 @@ function M.warm()
                 if id then
                     M.lookup(child.Name)
                     count = count + 1
+                else
+                    warm_folder(child)
                 end
             end
         end
     end
 
-    for i = 1, #WEAPON_CATEGORIES do
-        local cat = info:FindFirstChild(WEAPON_CATEGORIES[i])
-        if cat then
-            local ok2, cat_children = pcall(function() return cat:GetChildren() end)
-            if ok2 and cat_children then
-                for j = 1, #cat_children do
-                    local weapon = cat_children[j]
-                    local id = read_texture_id(weapon)
-                    if id then
-                        M.lookup(weapon.Name)
-                        count = count + 1
-                    end
-                end
-            end
-        end
-    end
-
+    warm_folder(info)
     return count
 end
 
@@ -3362,7 +3388,11 @@ local function variant_from_model(model, name)
     if link and link.ClassName == "ObjectValue" then
         local ok, folder = pcall(function() return link.Value end)
         if ok and folder and env.is_valid(folder) then
-            local folder_variant = read_string_value(env.find_child(folder, "variant"))
+            local data = env.find_child(folder, "data")
+            local folder_variant = read_string_value(env.find_child(data, "skinType"))
+                or read_string_value(env.find_child(data, "variant"))
+                or read_string_value(env.find_child(data, "skin"))
+                or read_string_value(env.find_child(folder, "variant"))
                 or read_string_value(env.find_child(folder, "skin"))
             if folder_variant then return folder_variant end
         end
@@ -8322,6 +8352,11 @@ local function draw_slot(x, y, size, key, piece, style, hint)
         if state == "loading" or state == "none" then
             return
         end
+        if state ~= "failed" then
+            return
+        end
+    elseif piece.asset_id or (piece.name and items.get_image_asset_id(piece.name, piece.variant)) then
+        return
     end
 
     local label = "?"

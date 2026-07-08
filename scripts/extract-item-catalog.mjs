@@ -53,7 +53,7 @@ function inferGearSlot(name) {
   ) {
     return "armor";
   }
-  if (
+    if (
     n.includes("mask") ||
     n.includes("goggles") ||
     n.includes("night vision") ||
@@ -61,6 +61,7 @@ function inferGearSlot(name) {
     n.includes("gas mask") ||
     n.includes("scuba")
   ) {
+    if (n.includes("helmet")) return "helmet";
     return "face_cover";
   }
   if (n.includes("helmet") || n.includes("headlamp")) return "helmet";

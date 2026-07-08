@@ -12,6 +12,8 @@ local WEAPON_CATEGORIES = {
     "Melee",
     "Grenades",
     "Throwable",
+    "Utilities",
+    "Uncategorized",
 }
 
 local function parse_rbx_asset_id(value)
@@ -52,12 +54,21 @@ local function get_weapons_info()
     return nil
 end
 
-local function lookup_in_folder(folder, name)
-    if not folder or not name or name == "" then return nil end
-    local child = env.safe_call(function()
-        if folder.FindFirstChild then return folder:FindFirstChild(name) end
+local function find_item_folder(root, name)
+    if not root or not name or name == "" then return nil end
+    return env.safe_call(function()
+        if root.FindFirstChild then
+            local ok, found = pcall(function() return root:FindFirstChild(name, true) end)
+            if ok and found then return found end
+            return root:FindFirstChild(name)
+        end
         return nil
     end)
+end
+
+local function lookup_in_folder(folder, name)
+    if not folder or not name or name == "" then return nil end
+    local child = find_item_folder(folder, name)
     if not child then return nil end
     return read_texture_id(child)
 end
@@ -67,9 +78,7 @@ local function lookup_runtime(name, variant)
     if not info then return nil end
 
     if variant and variant ~= "" then
-        local item_folder = env.safe_call(function()
-            return info:FindFirstChild(name)
-        end)
+        local item_folder = find_item_folder(info, name)
         if item_folder then
             local skins = env.find_child(item_folder, "skins")
             local skin_folder = skins and env.safe_call(function()
@@ -101,7 +110,7 @@ function M.lookup(name, variant)
         return cached ~= false and cached or nil
     end
 
-    local     asset_id = lookup_runtime(name, variant)
+    local asset_id = lookup_runtime(name, variant)
     if not asset_id then
         asset_id = havoc_catalog.get_asset_id(name, variant)
     end
@@ -119,8 +128,10 @@ function M.warm()
     if not info then return 0 end
 
     local count = 0
-    local ok, children = pcall(function() return info:GetChildren() end)
-    if ok and children then
+    local function warm_folder(folder)
+        if not folder then return end
+        local ok, children = pcall(function() return folder:GetChildren() end)
+        if not ok or not children then return end
         for i = 1, #children do
             local child = children[i]
             if child.ClassName == "Folder" then
@@ -128,28 +139,14 @@ function M.warm()
                 if id then
                     M.lookup(child.Name)
                     count = count + 1
+                else
+                    warm_folder(child)
                 end
             end
         end
     end
 
-    for i = 1, #WEAPON_CATEGORIES do
-        local cat = info:FindFirstChild(WEAPON_CATEGORIES[i])
-        if cat then
-            local ok2, cat_children = pcall(function() return cat:GetChildren() end)
-            if ok2 and cat_children then
-                for j = 1, #cat_children do
-                    local weapon = cat_children[j]
-                    local id = read_texture_id(weapon)
-                    if id then
-                        M.lookup(weapon.Name)
-                        count = count + 1
-                    end
-                end
-            end
-        end
-    end
-
+    warm_folder(info)
     return count
 end
 

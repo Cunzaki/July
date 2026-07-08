@@ -53,4 +53,10 @@ function M.decal_url(asset_id)
     )
 end
 
+function M.rbx_asset(asset_id)
+    asset_id = digits(asset_id)
+    if not asset_id then return nil end
+    return "rbxassetid://" .. asset_id
+end
+
 return M

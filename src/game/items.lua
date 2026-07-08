@@ -44,7 +44,11 @@ local function variant_from_model(model, name)
     if link and link.ClassName == "ObjectValue" then
         local ok, folder = pcall(function() return link.Value end)
         if ok and folder and env.is_valid(folder) then
-            local folder_variant = read_string_value(env.find_child(folder, "variant"))
+            local data = env.find_child(folder, "data")
+            local folder_variant = read_string_value(env.find_child(data, "skinType"))
+                or read_string_value(env.find_child(data, "variant"))
+                or read_string_value(env.find_child(data, "skin"))
+                or read_string_value(env.find_child(folder, "variant"))
                 or read_string_value(env.find_child(folder, "skin"))
             if folder_variant then return folder_variant end
         end
