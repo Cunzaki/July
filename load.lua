@@ -1,0 +1,1 @@
+utility.load_url("https://raw.githubusercontent.com/Cunzaki/July/refs/heads/main/july.lua")

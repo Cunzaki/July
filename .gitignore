@@ -1,0 +1,36 @@
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Dependencies
+node_modules/
+
+# Backups
+*.bak
+
+# Vector load copy (bundled output is july.lua)
+Script 1.lua
+
+# Local-only RE / reference material
+references/
+RE/
+
+# Game dump (large; local only)
+dump/
+
+# Local agent/dev notes
+AGENTS.md
+docs/
+
+# Cursor IDE
+.cursor/
+
+# Local Vector config files
+July_Config.txt
+HavocESP_Config.txt
+
+# Editor / local env
+*.local
+.env
+.env.*
