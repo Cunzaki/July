@@ -35,6 +35,7 @@ const ORDER = [
   "game/trap_types.lua",
   "game/havoc_sync.lua",
   "game/havoc_item_catalog.lua",
+  "game/gear_types.lua",
   "game/havoc_icons.lua",
   "game/item_images.lua",
   "game/items.lua",

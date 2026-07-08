@@ -2,93 +2,193 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const dumpPath = path.join(__dirname, "..", "dump", "catalog", "instances.jsonl");
-const outPath = path.join(__dirname, "..", "src", "game", "havoc_item_catalog.lua");
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const dumpPath = path.join(ROOT, "dump", "catalog", "instances.jsonl");
+const catalogPath = path.join(ROOT, "src", "game", "havoc_item_catalog.lua");
+const gearTypesPath = path.join(ROOT, "src", "game", "gear_types.lua");
+
+const WEAPON_CATS = new Set([
+  "Primary",
+  "Secondary",
+  "Melee",
+  "Grenades",
+  "Throwable",
+  "unused",
+  "Utilities",
+  "Uncategorized",
+]);
 
 const lines = fs.readFileSync(dumpPath, "utf8").split("\n");
 const byName = {};
+const gearSlots = {};
+const gearNames = new Set();
+
+function addCatalog(name, id, variant) {
+  if (!name || !id || id === "0") return;
+  if (!byName[name]) byName[name] = { default: id, variants: {} };
+  if (variant) {
+    byName[name].variants[variant] = id;
+  } else if (!byName[name].default) {
+    byName[name].default = id;
+  }
+}
+
+function addGearSlot(name, slot) {
+  if (!name || !slot) return;
+  gearNames.add(name);
+  gearSlots[name] = slot;
+}
+
+function inferGearSlot(name) {
+  const n = name.toLowerCase();
+  if (n.includes("backpack") || n.includes("sling bag") || n === "s&m backpack") return "backpack";
+  if (n.includes("glove") || n.includes("hand wrap") || n.includes("grip")) return "gloves";
+  if (n.includes("lower body") || n.includes("legging") || n.includes("pants")) return "lower_armor";
+  if (
+    n.includes("plate carrier") ||
+    n.includes("body armor") ||
+    n.includes("assault rig") ||
+    n.includes("vest") ||
+    n.includes("ghillie")
+  ) {
+    return "armor";
+  }
+  if (
+    n.includes("mask") ||
+    n.includes("goggles") ||
+    n.includes("night vision") ||
+    n.includes("welding mask") ||
+    n.includes("gas mask") ||
+    n.includes("scuba")
+  ) {
+    return "face_cover";
+  }
+  if (n.includes("helmet") || n.includes("headlamp")) return "helmet";
+  return "armor";
+}
 
 for (const line of lines) {
-    if (!line.includes("weaponsInfo") || !line.includes("textureId")) continue;
-    let row;
-    try {
-        row = JSON.parse(line);
-    } catch {
-        continue;
-    }
-    if (row.name !== "textureId" || !row.value) continue;
+  if (!line) continue;
+  let row;
+  try {
+    row = JSON.parse(line);
+  } catch {
+    continue;
+  }
 
-    const id = String(row.value).match(/rbxassetid:\/\/(\d+)/)?.[1];
-    if (!id || id === "0") continue;
+  const p = row.path || "";
 
-    const p = row.path || "";
+  if (p.includes("Modules/Items/gears/") && row.class === "ModuleScript" && row.name) {
+    gearNames.add(row.name);
+  }
 
-    let m = p.match(/weaponsInfo\/(Primary|Secondary|Melee|Grenades|Throwable)\/([^/]+)\/textureId$/);
-    if (m) {
-        byName[m[2]] = { default: id };
-        continue;
-    }
+  const equipMatch = p.match(/GridItemFolder\/([^/]+)\/equipmentType$/);
+  if (row.name === "equipmentType" && row.value && equipMatch) {
+    const itemName = equipMatch[1].replace(/_\d+$/, "");
+    addGearSlot(itemName, row.value);
+    continue;
+  }
 
-    m = p.match(/weaponsInfo\/unused\/([^/]+)\/textureId$/);
-    if (m) {
-        byName[m[1]] = { default: id };
-        continue;
-    }
+  if (!p.includes("weaponsInfo") || row.name !== "textureId" || !row.value) continue;
 
-    m = p.match(/weaponsInfo\/([^/]+)\/skins\/([^/]+)\/textureId$/);
-    if (m) {
-        const base = m[1];
-        const variant = m[2];
-        if (!byName[base]) byName[base] = { default: id, variants: {} };
-        if (!byName[base].default) byName[base].default = id;
-        byName[base].variants = byName[base].variants || {};
-        byName[base].variants[variant] = id;
-        continue;
-    }
+  const id = String(row.value).match(/rbxassetid:\/\/(\d+)/)?.[1];
+  if (!id || id === "0") continue;
 
-    m = p.match(/weaponsInfo\/([^/]+)\/textureId$/);
-    if (m) {
-        byName[m[1]] = { default: id };
-    }
+  const rel = p.split("weaponsInfo/")[1];
+  if (!rel) continue;
+  const parts = rel.split("/");
+
+  if (parts.length >= 4 && parts[1] === "skins") {
+    addCatalog(parts[0], id, parts[2]);
+    continue;
+  }
+
+  if (WEAPON_CATS.has(parts[0]) && parts.length >= 3 && parts[2] === "textureId") {
+    addCatalog(parts[1], id);
+    continue;
+  }
+
+  if (parts.length === 3 && parts[2] === "textureId") {
+    addCatalog(parts[1], id);
+    continue;
+  }
+
+  if (parts.length === 2 && parts[1] === "textureId") {
+    addCatalog(parts[0], id);
+  }
+}
+
+for (const name of gearNames) {
+  if (!gearSlots[name]) {
+    addGearSlot(name, inferGearSlot(name));
+  }
+  if (byName[name]) continue;
 }
 
 function luaEscape(s) {
-    return s.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  return s.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
 
-const names = Object.keys(byName).sort();
-let out = `-- AUTO-GENERATED by scripts/extract-item-catalog.mjs — do not edit by hand\n`;
-out += `-- Source: dump/catalog/instances.jsonl (__tempSTORAGE/weaponsInfo)\n\n`;
-out += `local M = {}\n\nM.by_name = {\n`;
+function writeCatalog() {
+  const names = Object.keys(byName).sort();
+  let out = `-- AUTO-GENERATED by scripts/extract-item-catalog.mjs — do not edit by hand\n`;
+  out += `-- Source: dump/catalog/instances.jsonl (__tempSTORAGE/weaponsInfo)\n\n`;
+  out += `local M = {}\n\nM.by_name = {\n`;
 
-for (const name of names) {
+  for (const name of names) {
     const entry = byName[name];
     out += `    ["${luaEscape(name)}"] = { default = "${entry.default}"`;
     if (entry.variants && Object.keys(entry.variants).length > 0) {
-        out += `, variants = { `;
-        const parts = [];
-        for (const [v, vid] of Object.entries(entry.variants)) {
-            parts.push(`["${luaEscape(v)}"] = "${vid}"`);
-        }
-        out += parts.join(", ") + " }";
+      const parts = [];
+      for (const [v, vid] of Object.entries(entry.variants).sort((a, b) => a[0].localeCompare(b[0]))) {
+        parts.push(`["${luaEscape(v)}"] = "${vid}"`);
+      }
+      out += `, variants = { ${parts.join(", ")} }`;
     }
     out += " },\n";
+  }
+
+  out += `}\n\nfunction M.get_asset_id(name, variant)\n`;
+  out += `    if not name or name == "" then return nil end\n`;
+  out += `    local entry = M.by_name[name]\n`;
+  out += `    if not entry then return nil end\n`;
+  out += `    local id\n`;
+  out += `    if variant and entry.variants and entry.variants[variant] then\n`;
+  out += `        id = entry.variants[variant]\n`;
+  out += `    else\n`;
+  out += `        id = entry.default\n`;
+  out += `    end\n`;
+  out += `    if not id or id == "" or id == "0" then return nil end\n`;
+  out += `    return id\n`;
+  out += `end\n\nreturn M\n`;
+
+  fs.writeFileSync(catalogPath, out);
+  console.log(`Wrote ${names.length} items to ${catalogPath}`);
 }
 
-out += `}\n\nfunction M.get_asset_id(name, variant)\n`;
-out += `    if not name or name == "" then return nil end\n`;
-out += `    local entry = M.by_name[name]\n`;
-out += `    if not entry then return nil end\n`;
-out += `    local id\n`;
-out += `    if variant and entry.variants and entry.variants[variant] then\n`;
-out += `        id = entry.variants[variant]\n`;
-out += `    else\n`;
-out += `        id = entry.default\n`;
-out += `    end\n`;
-out += `    if not id or id == "" or id == "0" then return nil end\n`;
-out += `    return id\n`;
-out += `end\n\nreturn M\n`;
+function writeGearTypes() {
+  const names = Object.keys(gearSlots).sort();
+  let out = `-- AUTO-GENERATED by scripts/extract-item-catalog.mjs — do not edit by hand\n`;
+  out += `-- Source: dump/catalog/instances.jsonl (Items/gears + GridItemFolder equipmentType)\n\n`;
+  out += `local M = {}\n\n`;
+  out += `M.SLOT_ORDER = { "helmet", "face_cover", "armor", "lower_armor", "gloves", "backpack" }\n\n`;
+  out += `M.by_name = {\n`;
+  for (const name of names) {
+    out += `    ["${luaEscape(name)}"] = "${gearSlots[name]}",\n`;
+  }
+  out += `}\n\n`;
+  out += `function M.get_slot(name)\n`;
+  out += `    if not name or name == "" then return nil end\n`;
+  out += `    return M.by_name[name]\n`;
+  out += `end\n\n`;
+  out += `function M.is_gear(name)\n`;
+  out += `    return M.get_slot(name) ~= nil\n`;
+  out += `end\n\n`;
+  out += `return M\n`;
 
-fs.writeFileSync(outPath, out);
-console.log(`Wrote ${names.length} items to ${outPath}`);
+  fs.writeFileSync(gearTypesPath, out);
+  console.log(`Wrote ${names.length} gear slots to ${gearTypesPath}`);
+}
+
+writeCatalog();
+writeGearTypes();

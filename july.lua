@@ -1,7 +1,7 @@
 --[[
     July - Havoc for Project Vector
     https://github.com/Cunzaki/July
-    Built: 2026-07-08T08:46:32.973Z
+    Built: 2026-07-08T09:24:46.267Z
 ]]
 
 July = {
@@ -398,19 +398,29 @@ local function warm_item_icons()
     end)
 
     pcall(function()
-        local catalog = July.require("game.havoc_item_catalog")
         local image_cache = July.require("core.image_cache")
-        local by_name = catalog.by_name
-        if not by_name then return end
-        local count = 0
-        for name, entry in pairs(by_name) do
-            local id = catalog.get_asset_id(name)
-            if id then
-                image_cache.preload_asset(id)
-                count = count + 1
-                if count >= 128 then break end
+        local warmed = {}
+
+        local function warm_catalog(mod_name, limit)
+            local catalog = July.require(mod_name)
+            if not catalog or not catalog.get_asset_id then return 0 end
+            local by_name = catalog.by_name
+            if not by_name then return 0 end
+            local count = 0
+            for name, _ in pairs(by_name) do
+                local id = catalog.get_asset_id(name)
+                if id and not warmed[id] then
+                    warmed[id] = true
+                    image_cache.preload_asset(id)
+                    count = count + 1
+                    if count >= limit then break end
+                end
             end
+            return count
         end
+
+        warm_catalog("game.havoc_item_catalog", 256)
+        warm_catalog("game.item_images", 256)
     end)
 end
 
@@ -2549,18 +2559,22 @@ July._mods["game.havoc_item_catalog"] = (function()
 local M = {}
 
 M.by_name = {
+    [".357 Magnum"] = { default = "13383502361" },
     ["311 Double Barrel"] = { default = "17317482404" },
     ["870 MCS"] = { default = "13383502661" },
     ["A7 Delta Riot Helmet"] = { default = "14311796917" },
     ["ACOG TA11D 3.5x35 riflescope"] = { default = "16966178128" },
+    ["AI-2"] = { default = "14287048636" },
     ["AK-74M"] = { default = "14092240677" },
     ["AKS-74U"] = { default = "14092234359" },
     ["AS VAL"] = { default = "13397139240" },
     ["AWP"] = { default = "16741784978" },
+    ["Airstrike"] = { default = "12775531325" },
     ["Altyn bulletproof Helmet"] = { default = "14335982397" },
     ["Altyn helmet face shield"] = { default = "14335982397" },
     ["Ammunition case"] = { default = "14336102602" },
     ["Angled foregrip"] = { default = "16966150481" },
+    ["Bandage"] = { default = "14287048636" },
     ["Barbed Wire Bat"] = { default = "13383506728" },
     ["Bramit 7.62x54R sound suppressor"] = { default = "16966184324" },
     ["Brassknuckles"] = { default = "13383512604" },
@@ -2570,12 +2584,15 @@ M.by_name = {
     ["Citori 725"] = { default = "17317482404" },
     ["Colt 4x20 riflescope"] = { default = "16966178128" },
     ["DC 800 High Cut Combat Helmet"] = { default = "14335982397" },
+    ["DIY Flamethrower"] = { default = "13594150219" },
     ["DP-27"] = { default = "16741507156" },
     ["EOTech 553 holographic sight"] = { default = "16966168683" },
+    ["Electric Bass"] = { default = "12880664164" },
     ["FAST MT Helmet"] = { default = "14335982397" },
     ["FAST multi-hit ballistic face shield"] = { default = "14335982397" },
     ["FORT-9 Heavy Assault Rig"] = { default = "14311544550" },
     ["FORTIS MK.II Gloves"] = { default = "14091842387" },
+    ["Fists"] = { default = "12916724759" },
     ["Forest Green Ghillie Suit"] = { default = "16486507039" },
     ["Gemtech SFN-57 5.7x28 sound suppressor"] = { default = "16966184324" },
     ["Gorynych-S _Sten_ Assault Rig"] = { default = "14311544550" },
@@ -2584,7 +2601,7 @@ M.by_name = {
     ["HK416"] = { default = "13397150898" },
     ["HVC Gen4 Body Armor"] = { default = "14311544550" },
     ["HVC Gen4 Body Armor (HMK)"] = { default = "14311544550" },
-    ["HVC Plate Carrier"] = { default = "14335999308", variants = { ["Black"] = "14335999308", ["Arctic"] = "14335999732", ["Camo"] = "14335999009" } },
+    ["HVC Plate Carrier"] = { default = "14335999308", variants = { ["Arctic"] = "14335999732", ["Black"] = "14335999308", ["Camo"] = "14335999009" } },
     ["HVC-10T Night Vision Goggles"] = { default = "14361153258" },
     ["Hand Wraps"] = { default = "14091842387" },
     ["Improvised plastic sound suppressor"] = { default = "16966205890" },
@@ -2594,16 +2611,20 @@ M.by_name = {
     ["KS-23M"] = { default = "13397150898" },
     ["Karambit"] = { default = "14035506091" },
     ["Katana"] = { default = "13807871344" },
+    ["Katana_old"] = { default = "13807871344" },
     ["Korund-VM Body Armor"] = { default = "14336089575" },
     ["LVPO 10x28 riflescope"] = { default = "16966178128" },
     ["Leupold Mark 8 8x24 riflescope"] = { default = "16966178128" },
+    ["Lockpick"] = { default = "14197694825" },
     ["M16A1"] = { default = "13397150898" },
+    ["M18 (White)"] = { default = "13577292077" },
     ["M249"] = { default = "13397150898" },
     ["M4 Benelli"] = { default = "13383502661" },
     ["M40 Gas Mask Filter"] = { default = "14385718382" },
     ["M40-1 Gas Mask"] = { default = "14385717978" },
     ["M40-2 Gas Mask"] = { default = "14385718382" },
     ["M4A1"] = { default = "13397150898" },
+    ["M67"] = { default = "13577292077" },
     ["M79"] = { default = "70609599401481" },
     ["MAC-10"] = { default = "13786377533" },
     ["MAC-10 sound suppressor"] = { default = "16966184324" },
@@ -2614,14 +2635,16 @@ M.by_name = {
     ["MP7"] = { default = "132575782254655" },
     ["MP9"] = { default = "13786377533" },
     ["MSA Paraclete Plate Carrier"] = { default = "14336089575" },
-    ["Mask"] = { default = "14336026902" },
+    ["Mask"] = { default = "14336026902", variants = { ["Black"] = "14336026902", ["Black Skull"] = "14336026902", ["Blue"] = "14336026902", ["Blue Skull"] = "14336026902", ["Olive Skull"] = "14336026902", ["Red"] = "14336026902", ["Red Skull"] = "14336026902", ["White"] = "14336026902", ["White Skull"] = "14336026902", ["Yellow"] = "14336026902" } },
     ["Maska-1SCh Helmet"] = { default = "16303952121" },
     ["Maska-1SCh _Voin_ Helmet"] = { default = "16303952121" },
     ["Maska-1SCh _Voin_ face shield"] = { default = "16303952121" },
     ["Maska-1SCh face shield"] = { default = "16303952121" },
+    ["Medical Kit"] = { default = "14287048636" },
     ["Military Backpack"] = { default = "17051303168" },
     ["Military Helmet"] = { default = "14311532304" },
     ["Mk14 EBR"] = { default = "14092240677" },
+    ["Molotov"] = { default = "16486507039" },
     ["NCStar AQPTLMG Compact Green Laser"] = { default = "16966200213" },
     ["NovaTec RMR reflex sight"] = { default = "16966191014" },
     ["NovaTec reflex sight"] = { default = "16966191014" },
@@ -2630,8 +2653,9 @@ M.by_name = {
     ["Oil Filter sound suppressor"] = { default = "16966205890" },
     ["P90"] = { default = "132575782254655" },
     ["PBS-1 sound suppressor"] = { default = "16966217090" },
-    ["PICO-A1 Light Lower Body Armor"] = { default = "14385093862", variants = { ["Black"] = "14385093862", ["Arctic"] = "14385094274", ["Camo"] = "14385094765" } },
-    ["PICO-A2 Heavy Lower Body Armor"] = { default = "14385118797", variants = { ["Black"] = "14385118797", ["Arctic"] = "14385119129", ["Camo"] = "14385119558" } },
+    ["PEQ-15 tactical device"] = { default = "16966158501" },
+    ["PICO-A1 Light Lower Body Armor"] = { default = "14385093862", variants = { ["Arctic"] = "14385094274", ["Black"] = "14385093862", ["Camo"] = "14385094765" } },
+    ["PICO-A2 Heavy Lower Body Armor"] = { default = "14385118797", variants = { ["Arctic"] = "14385119129", ["Black"] = "14385118797", ["Camo"] = "14385119558" } },
     ["PSO-1 4x24 scope"] = { default = "16966178128" },
     ["PU-1 3.5x riflescope"] = { default = "16966178128" },
     ["PX27 Headlamp"] = { default = "14177171806" },
@@ -2639,8 +2663,9 @@ M.by_name = {
     ["Precisive Grips"] = { default = "14091842387" },
     ["PureFire X300 Ultra"] = { default = "16966221058" },
     ["QDSS-NT4 5.56x45 sound suppressor"] = { default = "16966205890" },
+    ["RGO"] = { default = "13577292077" },
     ["RK-1 tactical foregrip"] = { default = "16966238886" },
-    ["ROVER Motorcycle Helmet"] = { default = "14385136221", variants = { ["Black"] = "14385136221", ["White"] = "14385136221", ["Olive"] = "14385136221", ["Blue"] = "14385136221", ["Red"] = "14385136221" } },
+    ["ROVER Motorcycle Helmet"] = { default = "14385136221", variants = { ["Black"] = "14385136221", ["Blue"] = "14385136221", ["Olive"] = "14385136221", ["Red"] = "14385136221", ["White"] = "14385136221" } },
     ["RPG-7"] = { default = "13410069947" },
     ["S&M Backpack"] = { default = "14336102602" },
     ["SCAR-H"] = { default = "14116277034" },
@@ -2653,6 +2678,7 @@ M.by_name = {
     ["SilKo Salvo 12 12ga sound suppressor"] = { default = "16966205890" },
     ["Slick Plate Carrier"] = { default = "14336089575" },
     ["Sling Bag"] = { default = "14336124360" },
+    ["Splint"] = { default = "14287048636" },
     ["T-7 Thermal Goggles"] = { default = "14361153258" },
     ["T178 Raid Backpack"] = { default = "17051303168" },
     ["Tactical Sword"] = { default = "13807871344" },
@@ -2660,6 +2686,7 @@ M.by_name = {
     ["Tagilla's welding mask _UBEY_"] = { default = "14335982397" },
     ["The Crucible"] = { default = "13713117580" },
     ["Tomahawk"] = { default = "13398455017" },
+    ["Tourniquet"] = { default = "16486507039" },
     ["Type 04-1 holographic sight"] = { default = "16966168683" },
     ["UH-1 holographic sight"] = { default = "16966168683" },
     ["ULACH IIIA Helmet"] = { default = "14311532304" },
@@ -2669,7 +2696,7 @@ M.by_name = {
     ["Vertical foregrip"] = { default = "16966238886" },
     ["Weapon case"] = { default = "14336102602" },
     ["XImprovised plastic sound suppressor"] = { default = "16966205890" },
-    ["Xtreme Motorcycle Helmet"] = { default = "14385147772", variants = { ["Black"] = "14385147772", ["White"] = "14385147772", ["Olive"] = "14385147772", ["Blue"] = "14385147772", ["Red"] = "14385147772" } },
+    ["Xtreme Motorcycle Helmet"] = { default = "14385147772", variants = { ["Black"] = "14385147772", ["Blue"] = "14385147772", ["Olive"] = "14385147772", ["Red"] = "14385147772", ["White"] = "14385147772" } },
     ["YMA95-1 3.5x riflescope"] = { default = "16966178128" },
 }
 
@@ -2685,6 +2712,73 @@ function M.get_asset_id(name, variant)
     end
     if not id or id == "" or id == "0" then return nil end
     return id
+end
+
+return M
+
+end)()
+
+-- ── game/gear_types.lua ──
+July._mods["game.gear_types"] = (function()
+-- AUTO-GENERATED by scripts/extract-item-catalog.mjs — do not edit by hand
+-- Source: dump/catalog/instances.jsonl (Items/gears + GridItemFolder equipmentType)
+
+local M = {}
+
+M.SLOT_ORDER = { "helmet", "face_cover", "armor", "lower_armor", "gloves", "backpack" }
+
+M.by_name = {
+    ["5.11 Hexgrid Plate Carrier"] = "armor",
+    ["A7 Delta Riot Helmet"] = "helmet",
+    ["Altyn bulletproof Helmet"] = "helmet",
+    ["DC 800 High Cut Combat Helmet"] = "helmet",
+    ["FAST MT Helmet"] = "helmet",
+    ["FORT-9 Heavy Assault Rig"] = "armor",
+    ["FORTIS MK.II Gloves"] = "gloves",
+    ["Forest Green Ghillie Suit"] = "armor",
+    ["Gorynych-S \"Sten\" Assault Rig"] = "armor",
+    ["Gorynych-S _Sten_ Assault Rig"] = "armor",
+    ["Gzhel-K Body Armor"] = "armor",
+    ["HVC Gen4 Body Armor"] = "armor",
+    ["HVC Gen4 Body Armor (HMK)"] = "armor",
+    ["HVC Plate Carrier"] = "armor",
+    ["Hand Wraps"] = "gloves",
+    ["Integrated Tactical Plate Carrier"] = "armor",
+    ["Korund-VM Body Armor"] = "armor",
+    ["M40-1 Gas Mask"] = "face_cover",
+    ["M40-2 Gas Mask"] = "face_cover",
+    ["MBC Plate Carrier"] = "armor",
+    ["MOTR Concealable Reinforced Vest"] = "armor",
+    ["MSA Paraclete Plate Carrier"] = "armor",
+    ["Mask"] = "face_cover",
+    ["Maska-1SCh \"Voin\" Helmet"] = "face_cover",
+    ["Maska-1SCh Helmet"] = "helmet",
+    ["Maska-1SCh _Voin_ Helmet"] = "helmet",
+    ["Military Backpack"] = "backpack",
+    ["Military Helmet"] = "helmet",
+    ["PICO-A1 Light Lower Body Armor"] = "lower_armor",
+    ["PICO-A2 Heavy Lower Body Armor"] = "lower_armor",
+    ["PX27 Headlamp"] = "helmet",
+    ["Precisive Grips"] = "gloves",
+    ["ROVER Motorcycle Helmet"] = "helmet",
+    ["S&M Backpack"] = "backpack",
+    ["Scuba Gear"] = "face_cover",
+    ["Slick Plate Carrier"] = "armor",
+    ["Sling Bag"] = "backpack",
+    ["T178 Raid Backpack"] = "backpack",
+    ["Tagilla's welding mask \"Gorilla\""] = "face_cover",
+    ["Tagilla's welding mask \"UBEY\""] = "face_cover",
+    ["ULACH IIIA Helmet"] = "helmet",
+    ["Xtreme Motorcycle Helmet"] = "helmet",
+}
+
+function M.get_slot(name)
+    if not name or name == "" then return nil end
+    return M.by_name[name]
+end
+
+function M.is_gear(name)
+    return M.get_slot(name) ~= nil
 end
 
 return M
@@ -2796,9 +2890,12 @@ function M.lookup(name, variant)
         return cached ~= false and cached or nil
     end
 
-    local asset_id = lookup_runtime(name, variant)
+    local     asset_id = lookup_runtime(name, variant)
     if not asset_id then
         asset_id = havoc_catalog.get_asset_id(name, variant)
+    end
+    if not asset_id then
+        asset_id = July.require("game.item_images").get_asset_id(name, variant)
     end
 
     runtime_cache[cache_key] = asset_id or false
@@ -3222,13 +3319,13 @@ July._mods["game.items"] = (function()
 local havoc_icons = July.require("game.havoc_icons")
 local havoc_catalog = July.require("game.havoc_item_catalog")
 local item_images = July.require("game.item_images")
+local gear_types = July.require("game.gear_types")
 local tier_util = July.require("game.tier_util")
 local env = July.require("core.env")
 
 local M = {}
 
 local SKIP_WELD_NAMES = {
-    Mask = true,
     WeldObjectsLink = true,
     thermalTemplate = true,
     welds = true,
@@ -3241,6 +3338,45 @@ local function parse_variant_name(name)
     local base, variant = name:match("^([^/]+)/(.+)$")
     if base and variant then return base, variant end
     return name, nil
+end
+
+local function read_string_value(inst)
+    if not inst then return nil end
+    local ok, value = pcall(function() return inst.Value end)
+    if ok and value and value ~= "" then return tostring(value) end
+    return nil
+end
+
+local function variant_from_model(model, name)
+    if not model or not env.is_valid(model) then return nil end
+
+    local data = env.find_child(model, "_data")
+    if data then
+        local variant = read_string_value(env.find_child(data, "variant"))
+            or read_string_value(env.find_child(data, "skin"))
+            or read_string_value(env.find_child(data, "skinName"))
+        if variant then return variant end
+    end
+
+    local link = env.find_child(model, "linkItemFolder")
+    if link and link.ClassName == "ObjectValue" then
+        local ok, folder = pcall(function() return link.Value end)
+        if ok and folder and env.is_valid(folder) then
+            local folder_variant = read_string_value(env.find_child(folder, "variant"))
+                or read_string_value(env.find_child(folder, "skin"))
+            if folder_variant then return folder_variant end
+        end
+    end
+
+    local skins = env.find_child(model, "skins")
+    if skins then
+        local ok, children = pcall(function() return skins:GetChildren() end)
+        if ok and children and #children == 1 then
+            return children[1].Name
+        end
+    end
+
+    return nil
 end
 
 local function texture_asset_from_inst(inst)
@@ -3293,6 +3429,8 @@ local function resolve_asset_id(name, variant, model)
         local inst = find_named_child(model, name)
         asset_id = texture_asset_from_inst(inst)
         if asset_id then return asset_id end
+        asset_id = texture_asset_from_inst(model)
+        if asset_id then return asset_id end
     end
 
     return nil
@@ -3301,9 +3439,14 @@ end
 function M.make_piece(name, variant, model)
     if not name or name == "" then return nil end
 
+    if not variant or variant == "" then
+        variant = variant_from_model(model, name)
+    end
+
     return {
         name = name,
         variant = variant,
+        slot = gear_types.get_slot(name),
         asset_id = resolve_asset_id(name, variant, model),
     }
 end
@@ -3311,9 +3454,6 @@ end
 function M.resolve_item_label(label, model)
     if not label or label == "" then return nil end
     local base, variant = parse_variant_name(label)
-    if tier_util.is_known_item(base) or tier_util.is_gun_name(base) or tier_util.is_keycard(base) then
-        return M.make_piece(base, variant, model)
-    end
     return M.make_piece(base, variant, model)
 end
 
@@ -3329,10 +3469,13 @@ function M.is_gear_piece_name(name)
     if not name or name == "" then return false end
     if SKIP_WELD_NAMES[name] then return false end
     if name:sub(1, 1) == "_" then return false end
+    if gear_types.is_gear(name) then return true end
     if tier_util.is_known_item(name) or tier_util.is_gun_name(name) or tier_util.is_keycard(name) then
         return true
     end
-    return havoc_catalog.get_asset_id(name) ~= nil
+    if havoc_catalog.get_asset_id(name) then return true end
+    if item_images.get_asset_id(name) then return true end
+    return false
 end
 
 return M
@@ -3390,6 +3533,7 @@ end)()
 July._mods["game.target_gear"] = (function()
 local env = July.require("core.env")
 local items = July.require("game.items")
+local gear_types = July.require("game.gear_types")
 local tier_util = July.require("game.tier_util")
 
 local M = {}
@@ -3434,6 +3578,9 @@ local function add_armor(out, seen, piece)
     if not piece or not piece.name then return end
     if seen[piece.name] then return end
     seen[piece.name] = true
+    if not piece.slot then
+        piece.slot = gear_types.get_slot(piece.name)
+    end
     out.armor[#out.armor + 1] = piece
 end
 
@@ -3638,8 +3785,6 @@ local function scan_gear_model(piece_model, out, armor_seen, att_seen)
     if piece_model.ClassName ~= "Model" then return end
 
     local name = piece_model.Name
-    if name == "Mask" then return end
-
     if items.is_gear_piece_name(name) then
         add_armor(out, armor_seen, items.resolve_item_label(name, piece_model))
     end
@@ -7817,6 +7962,7 @@ local draw_util = July.require("core.draw_util")
 local math_util = July.require("core.math_util")
 local image_cache = July.require("core.image_cache")
 local items = July.require("game.items")
+local gear_types = July.require("game.gear_types")
 local target_gear = July.require("game.target_gear")
 local entity_scan = July.require("game.entity_scan")
 local targeting = July.require("features.combat.targeting")
@@ -7826,10 +7972,10 @@ local env = July.require("core.env")
 local M = {}
 
 local P = "havoc_target_gear"
-local GEAR_SLOTS = 7
 local GEAR_TTL = 500
 local TARGET_POLL_MS = 120
-local MAX_ATTACHMENTS = 5
+local MAX_ATTACHMENTS = 10
+local MAX_EXTRA = 4
 
 local gear_cache = {}
 local last_poll_ms = 0
@@ -7845,6 +7991,15 @@ local ATT_EDGE = { 0.45, 0.45, 0.48, 0.5 }
 local EMPTY_BG = { 0.08, 0.08, 0.1, 0.55 }
 local EMPTY_EDGE = { 1, 1, 1, 0.12 }
 local ROUND = 5
+
+local SLOT_LABELS = {
+    helmet = "HELM",
+    face_cover = "FACE",
+    armor = "CHEST",
+    lower_armor = "LEGS",
+    gloves = "GLV",
+    backpack = "BAG",
+}
 
 local function tick_ms()
     return utility and utility.get_tick_count and utility.get_tick_count() or (os.clock() * 1000)
@@ -7873,6 +8028,7 @@ local function resolve_image_key(piece)
         if asset_id then
             local key = img_key("item_", asset_id)
             image_cache.ensure(key, asset_id)
+            piece.asset_id = asset_id
             return key
         end
     end
@@ -8024,47 +8180,33 @@ local function find_crosshair_target(fov_px)
     return best
 end
 
-local function armor_sort_key(piece)
-    local n = (piece.name or ""):lower()
-    if n:find("helmet", 1, true) or n:find("head", 1, true) or n:find("cap", 1, true)
-        or n:find("wrap", 1, true) or n:find("balaclava", 1, true) or n:find("hood", 1, true) then
-        return 1
-    end
-    if n:find("chest", 1, true) or n:find("plate", 1, true) or n:find("shirt", 1, true)
-        or n:find("jacket", 1, true) or n:find("hoodie", 1, true) or n:find("vest", 1, true)
-        or n:find("suit", 1, true) or n:find("torso", 1, true) or n:find("carrier", 1, true) then
-        return 2
-    end
-    if n:find("legging", 1, true) or n:find("pants", 1, true) or n:find("shorts", 1, true) then
-        return 3
-    end
-    if n:find("glove", 1, true) or n:find("handwrap", 1, true) or n:find("hand wrap", 1, true) then
-        return 4
-    end
-    if n:find("boot", 1, true) or n:find("footwrap", 1, true) or n:find("shoe", 1, true) then
-        return 5
-    end
-    if n:find("backpack", 1, true) or n:find("bag", 1, true) then
-        return 6
-    end
-    return 7
+local function infer_slot(piece)
+    if piece.slot then return piece.slot end
+    return gear_types.get_slot(piece.name)
 end
 
-local function pack_gear(armor_list)
-    local sorted = {}
-    for i = 1, #(armor_list or {}) do
-        sorted[i] = armor_list[i]
-    end
-    table.sort(sorted, function(a, b)
-        return armor_sort_key(a) < armor_sort_key(b)
-    end)
+local function pack_gear_slots(armor_list)
+    local slots = {}
+    local extra = {}
+    local order = gear_types.SLOT_ORDER or {
+        "helmet", "face_cover", "armor", "lower_armor", "gloves", "backpack",
+    }
 
-    local packed = {}
-    for i = 1, #sorted do
-        packed[#packed + 1] = sorted[i]
-        if #packed >= GEAR_SLOTS then break end
+    for i = 1, #order do
+        slots[order[i]] = nil
     end
-    return packed
+
+    for i = 1, #(armor_list or {}) do
+        local piece = armor_list[i]
+        local slot = infer_slot(piece)
+        if slot and slots[slot] == nil then
+            slots[slot] = piece
+        elseif #extra < MAX_EXTRA then
+            extra[#extra + 1] = piece
+        end
+    end
+
+    return slots, extra, order
 end
 
 local function pack_attachments(list)
@@ -8075,15 +8217,24 @@ local function pack_attachments(list)
     return packed
 end
 
+local function preload_piece(piece)
+    local key = resolve_image_key(piece)
+    if key then
+        image_cache.begin_load(key)
+    end
+    return key
+end
+
 local function build_layout(gear, gear_sz)
     local held = gear and gear.held
-    local packed = pack_gear(gear and gear.armor)
+    local slots, extra, order = pack_gear_slots(gear and gear.armor)
     local attachments = pack_attachments(gear and gear.attachments)
     local held_sz = math.floor(gear_sz * 1.28)
     local att_sz = math.floor(gear_sz * 0.78)
     local gap = 5
     local att_gap = 4
-    local row_w = GEAR_SLOTS * gear_sz + (GEAR_SLOTS - 1) * gap
+    local slot_count = #order + (#extra > 0 and #extra or 0)
+    local row_w = slot_count * gear_sz + (slot_count - 1) * gap
     local att_row_w = #attachments > 0 and (#attachments * att_sz + (#attachments - 1) * att_gap) or 0
     local held_row_w = held_sz + (#attachments > 0 and (10 + att_row_w) or 0)
     local panel_w = math.max(row_w, held_row_w)
@@ -8091,8 +8242,9 @@ local function build_layout(gear, gear_sz)
     local layout = {
         held = held,
         attachments = attachments,
-        packed = packed,
-        filled = #packed,
+        slots = slots,
+        extra = extra,
+        order = order,
         gear_sz = gear_sz,
         held_sz = held_sz,
         att_sz = att_sz,
@@ -8105,26 +8257,26 @@ local function build_layout(gear, gear_sz)
         name_fs = 11,
         held_key = nil,
         att_keys = {},
-        gear_keys = {},
+        slot_keys = {},
+        extra_keys = {},
     }
 
-    layout.held_key = held and resolve_image_key(held) or nil
-    for i = 1, layout.filled do
-        layout.gear_keys[i] = resolve_image_key(packed[i])
-        if layout.gear_keys[i] then image_cache.begin_load(layout.gear_keys[i]) end
+    layout.held_key = held and preload_piece(held) or nil
+    for i = 1, #order do
+        local slot_id = order[i]
+        layout.slot_keys[slot_id] = slots[slot_id] and preload_piece(slots[slot_id]) or nil
+    end
+    for i = 1, #extra do
+        layout.extra_keys[i] = preload_piece(extra[i])
     end
     for i = 1, #attachments do
-        layout.att_keys[i] = resolve_image_key(attachments[i])
-        if layout.att_keys[i] then image_cache.begin_load(layout.att_keys[i]) end
-    end
-    if layout.held_key then
-        image_cache.begin_load(layout.held_key)
+        layout.att_keys[i] = preload_piece(attachments[i])
     end
 
     return layout
 end
 
-local function draw_slot(x, y, size, key, piece, style)
+local function draw_slot(x, y, size, key, piece, style, hint)
     local pad = 3
     local bg = SLOT_BG
     local edge = nil
@@ -8145,6 +8297,18 @@ local function draw_slot(x, y, size, key, piece, style)
         draw.rect(x, y, size, size, edge, ROUND, 1.5)
     elseif style == "empty" and draw.rect then
         draw.rect(x, y, size, size, EMPTY_EDGE, ROUND, 1)
+    end
+
+    if hint and style == "empty" then
+        local fs = math.max(8, math.floor(size * 0.18))
+        local tw = select(1, draw.get_text_size(hint, fs))
+        draw.text(
+            x + size * 0.5 - tw * 0.5,
+            y + size - fs - 3,
+            hint,
+            { 0.45, 0.45, 0.48, 0.75 },
+            fs
+        )
     end
 
     if not piece then return end
@@ -8280,13 +8444,40 @@ function M.draw()
     y = y + layout.held_sz + layout.row_gap
 
     local start_x = cx - layout.row_w * 0.5
-    for i = 1, GEAR_SLOTS do
-        local piece = i <= layout.filled and layout.packed[i] or nil
-        local sx = start_x + (i - 1) * (layout.gear_sz + layout.gap)
-        draw_slot(sx, y, layout.gear_sz, layout.gear_keys[i], piece, piece and "gear" or "empty")
+    local col = 0
+    for i = 1, #layout.order do
+        local slot_id = layout.order[i]
+        local piece = layout.slots[slot_id]
+        local sx = start_x + col * (layout.gear_sz + layout.gap)
+        draw_slot(
+            sx,
+            y,
+            layout.gear_sz,
+            layout.slot_keys[slot_id],
+            piece,
+            piece and "gear" or "empty",
+            SLOT_LABELS[slot_id]
+        )
+        col = col + 1
     end
 
-    if not held and layout.filled == 0 then
+    for i = 1, #layout.extra do
+        local piece = layout.extra[i]
+        local sx = start_x + col * (layout.gear_sz + layout.gap)
+        draw_slot(sx, y, layout.gear_sz, layout.extra_keys[i], piece, "gear")
+        col = col + 1
+    end
+
+    local has_gear = held ~= nil
+    for i = 1, #layout.order do
+        if layout.slots[layout.order[i]] then
+            has_gear = true
+            break
+        end
+    end
+    if #layout.extra > 0 then has_gear = true end
+
+    if not has_gear then
         local hint = "No gear detected"
         local hw = select(1, draw.get_text_size(hint, 10))
         draw.text(cx - hw * 0.5, y + layout.gear_sz + 6, hint, { 0.55, 0.55, 0.58, 0.85 }, 10)

@@ -3,6 +3,7 @@ local draw_util = July.require("core.draw_util")
 local math_util = July.require("core.math_util")
 local image_cache = July.require("core.image_cache")
 local items = July.require("game.items")
+local gear_types = July.require("game.gear_types")
 local target_gear = July.require("game.target_gear")
 local entity_scan = July.require("game.entity_scan")
 local targeting = July.require("features.combat.targeting")
@@ -12,10 +13,10 @@ local env = July.require("core.env")
 local M = {}
 
 local P = "havoc_target_gear"
-local GEAR_SLOTS = 7
 local GEAR_TTL = 500
 local TARGET_POLL_MS = 120
-local MAX_ATTACHMENTS = 5
+local MAX_ATTACHMENTS = 10
+local MAX_EXTRA = 4
 
 local gear_cache = {}
 local last_poll_ms = 0
@@ -31,6 +32,15 @@ local ATT_EDGE = { 0.45, 0.45, 0.48, 0.5 }
 local EMPTY_BG = { 0.08, 0.08, 0.1, 0.55 }
 local EMPTY_EDGE = { 1, 1, 1, 0.12 }
 local ROUND = 5
+
+local SLOT_LABELS = {
+    helmet = "HELM",
+    face_cover = "FACE",
+    armor = "CHEST",
+    lower_armor = "LEGS",
+    gloves = "GLV",
+    backpack = "BAG",
+}
 
 local function tick_ms()
     return utility and utility.get_tick_count and utility.get_tick_count() or (os.clock() * 1000)
@@ -59,6 +69,7 @@ local function resolve_image_key(piece)
         if asset_id then
             local key = img_key("item_", asset_id)
             image_cache.ensure(key, asset_id)
+            piece.asset_id = asset_id
             return key
         end
     end
@@ -210,47 +221,33 @@ local function find_crosshair_target(fov_px)
     return best
 end
 
-local function armor_sort_key(piece)
-    local n = (piece.name or ""):lower()
-    if n:find("helmet", 1, true) or n:find("head", 1, true) or n:find("cap", 1, true)
-        or n:find("wrap", 1, true) or n:find("balaclava", 1, true) or n:find("hood", 1, true) then
-        return 1
-    end
-    if n:find("chest", 1, true) or n:find("plate", 1, true) or n:find("shirt", 1, true)
-        or n:find("jacket", 1, true) or n:find("hoodie", 1, true) or n:find("vest", 1, true)
-        or n:find("suit", 1, true) or n:find("torso", 1, true) or n:find("carrier", 1, true) then
-        return 2
-    end
-    if n:find("legging", 1, true) or n:find("pants", 1, true) or n:find("shorts", 1, true) then
-        return 3
-    end
-    if n:find("glove", 1, true) or n:find("handwrap", 1, true) or n:find("hand wrap", 1, true) then
-        return 4
-    end
-    if n:find("boot", 1, true) or n:find("footwrap", 1, true) or n:find("shoe", 1, true) then
-        return 5
-    end
-    if n:find("backpack", 1, true) or n:find("bag", 1, true) then
-        return 6
-    end
-    return 7
+local function infer_slot(piece)
+    if piece.slot then return piece.slot end
+    return gear_types.get_slot(piece.name)
 end
 
-local function pack_gear(armor_list)
-    local sorted = {}
-    for i = 1, #(armor_list or {}) do
-        sorted[i] = armor_list[i]
-    end
-    table.sort(sorted, function(a, b)
-        return armor_sort_key(a) < armor_sort_key(b)
-    end)
+local function pack_gear_slots(armor_list)
+    local slots = {}
+    local extra = {}
+    local order = gear_types.SLOT_ORDER or {
+        "helmet", "face_cover", "armor", "lower_armor", "gloves", "backpack",
+    }
 
-    local packed = {}
-    for i = 1, #sorted do
-        packed[#packed + 1] = sorted[i]
-        if #packed >= GEAR_SLOTS then break end
+    for i = 1, #order do
+        slots[order[i]] = nil
     end
-    return packed
+
+    for i = 1, #(armor_list or {}) do
+        local piece = armor_list[i]
+        local slot = infer_slot(piece)
+        if slot and slots[slot] == nil then
+            slots[slot] = piece
+        elseif #extra < MAX_EXTRA then
+            extra[#extra + 1] = piece
+        end
+    end
+
+    return slots, extra, order
 end
 
 local function pack_attachments(list)
@@ -261,15 +258,24 @@ local function pack_attachments(list)
     return packed
 end
 
+local function preload_piece(piece)
+    local key = resolve_image_key(piece)
+    if key then
+        image_cache.begin_load(key)
+    end
+    return key
+end
+
 local function build_layout(gear, gear_sz)
     local held = gear and gear.held
-    local packed = pack_gear(gear and gear.armor)
+    local slots, extra, order = pack_gear_slots(gear and gear.armor)
     local attachments = pack_attachments(gear and gear.attachments)
     local held_sz = math.floor(gear_sz * 1.28)
     local att_sz = math.floor(gear_sz * 0.78)
     local gap = 5
     local att_gap = 4
-    local row_w = GEAR_SLOTS * gear_sz + (GEAR_SLOTS - 1) * gap
+    local slot_count = #order + (#extra > 0 and #extra or 0)
+    local row_w = slot_count * gear_sz + (slot_count - 1) * gap
     local att_row_w = #attachments > 0 and (#attachments * att_sz + (#attachments - 1) * att_gap) or 0
     local held_row_w = held_sz + (#attachments > 0 and (10 + att_row_w) or 0)
     local panel_w = math.max(row_w, held_row_w)
@@ -277,8 +283,9 @@ local function build_layout(gear, gear_sz)
     local layout = {
         held = held,
         attachments = attachments,
-        packed = packed,
-        filled = #packed,
+        slots = slots,
+        extra = extra,
+        order = order,
         gear_sz = gear_sz,
         held_sz = held_sz,
         att_sz = att_sz,
@@ -291,26 +298,26 @@ local function build_layout(gear, gear_sz)
         name_fs = 11,
         held_key = nil,
         att_keys = {},
-        gear_keys = {},
+        slot_keys = {},
+        extra_keys = {},
     }
 
-    layout.held_key = held and resolve_image_key(held) or nil
-    for i = 1, layout.filled do
-        layout.gear_keys[i] = resolve_image_key(packed[i])
-        if layout.gear_keys[i] then image_cache.begin_load(layout.gear_keys[i]) end
+    layout.held_key = held and preload_piece(held) or nil
+    for i = 1, #order do
+        local slot_id = order[i]
+        layout.slot_keys[slot_id] = slots[slot_id] and preload_piece(slots[slot_id]) or nil
+    end
+    for i = 1, #extra do
+        layout.extra_keys[i] = preload_piece(extra[i])
     end
     for i = 1, #attachments do
-        layout.att_keys[i] = resolve_image_key(attachments[i])
-        if layout.att_keys[i] then image_cache.begin_load(layout.att_keys[i]) end
-    end
-    if layout.held_key then
-        image_cache.begin_load(layout.held_key)
+        layout.att_keys[i] = preload_piece(attachments[i])
     end
 
     return layout
 end
 
-local function draw_slot(x, y, size, key, piece, style)
+local function draw_slot(x, y, size, key, piece, style, hint)
     local pad = 3
     local bg = SLOT_BG
     local edge = nil
@@ -331,6 +338,18 @@ local function draw_slot(x, y, size, key, piece, style)
         draw.rect(x, y, size, size, edge, ROUND, 1.5)
     elseif style == "empty" and draw.rect then
         draw.rect(x, y, size, size, EMPTY_EDGE, ROUND, 1)
+    end
+
+    if hint and style == "empty" then
+        local fs = math.max(8, math.floor(size * 0.18))
+        local tw = select(1, draw.get_text_size(hint, fs))
+        draw.text(
+            x + size * 0.5 - tw * 0.5,
+            y + size - fs - 3,
+            hint,
+            { 0.45, 0.45, 0.48, 0.75 },
+            fs
+        )
     end
 
     if not piece then return end
@@ -466,13 +485,40 @@ function M.draw()
     y = y + layout.held_sz + layout.row_gap
 
     local start_x = cx - layout.row_w * 0.5
-    for i = 1, GEAR_SLOTS do
-        local piece = i <= layout.filled and layout.packed[i] or nil
-        local sx = start_x + (i - 1) * (layout.gear_sz + layout.gap)
-        draw_slot(sx, y, layout.gear_sz, layout.gear_keys[i], piece, piece and "gear" or "empty")
+    local col = 0
+    for i = 1, #layout.order do
+        local slot_id = layout.order[i]
+        local piece = layout.slots[slot_id]
+        local sx = start_x + col * (layout.gear_sz + layout.gap)
+        draw_slot(
+            sx,
+            y,
+            layout.gear_sz,
+            layout.slot_keys[slot_id],
+            piece,
+            piece and "gear" or "empty",
+            SLOT_LABELS[slot_id]
+        )
+        col = col + 1
     end
 
-    if not held and layout.filled == 0 then
+    for i = 1, #layout.extra do
+        local piece = layout.extra[i]
+        local sx = start_x + col * (layout.gear_sz + layout.gap)
+        draw_slot(sx, y, layout.gear_sz, layout.extra_keys[i], piece, "gear")
+        col = col + 1
+    end
+
+    local has_gear = held ~= nil
+    for i = 1, #layout.order do
+        if layout.slots[layout.order[i]] then
+            has_gear = true
+            break
+        end
+    end
+    if #layout.extra > 0 then has_gear = true end
+
+    if not has_gear then
         local hint = "No gear detected"
         local hw = select(1, draw.get_text_size(hint, 10))
         draw.text(cx - hw * 0.5, y + layout.gear_sz + 6, hint, { 0.55, 0.55, 0.58, 0.85 }, 10)

@@ -40,19 +40,29 @@ local function warm_item_icons()
     end)
 
     pcall(function()
-        local catalog = July.require("game.havoc_item_catalog")
         local image_cache = July.require("core.image_cache")
-        local by_name = catalog.by_name
-        if not by_name then return end
-        local count = 0
-        for name, entry in pairs(by_name) do
-            local id = catalog.get_asset_id(name)
-            if id then
-                image_cache.preload_asset(id)
-                count = count + 1
-                if count >= 128 then break end
+        local warmed = {}
+
+        local function warm_catalog(mod_name, limit)
+            local catalog = July.require(mod_name)
+            if not catalog or not catalog.get_asset_id then return 0 end
+            local by_name = catalog.by_name
+            if not by_name then return 0 end
+            local count = 0
+            for name, _ in pairs(by_name) do
+                local id = catalog.get_asset_id(name)
+                if id and not warmed[id] then
+                    warmed[id] = true
+                    image_cache.preload_asset(id)
+                    count = count + 1
+                    if count >= limit then break end
+                end
             end
+            return count
         end
+
+        warm_catalog("game.havoc_item_catalog", 256)
+        warm_catalog("game.item_images", 256)
     end)
 end
 

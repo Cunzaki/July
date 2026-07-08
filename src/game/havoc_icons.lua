@@ -101,9 +101,12 @@ function M.lookup(name, variant)
         return cached ~= false and cached or nil
     end
 
-    local asset_id = lookup_runtime(name, variant)
+    local     asset_id = lookup_runtime(name, variant)
     if not asset_id then
         asset_id = havoc_catalog.get_asset_id(name, variant)
+    end
+    if not asset_id then
+        asset_id = July.require("game.item_images").get_asset_id(name, variant)
     end
 
     runtime_cache[cache_key] = asset_id or false

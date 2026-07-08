@@ -1,5 +1,6 @@
 local env = July.require("core.env")
 local items = July.require("game.items")
+local gear_types = July.require("game.gear_types")
 local tier_util = July.require("game.tier_util")
 
 local M = {}
@@ -44,6 +45,9 @@ local function add_armor(out, seen, piece)
     if not piece or not piece.name then return end
     if seen[piece.name] then return end
     seen[piece.name] = true
+    if not piece.slot then
+        piece.slot = gear_types.get_slot(piece.name)
+    end
     out.armor[#out.armor + 1] = piece
 end
 
@@ -248,8 +252,6 @@ local function scan_gear_model(piece_model, out, armor_seen, att_seen)
     if piece_model.ClassName ~= "Model" then return end
 
     local name = piece_model.Name
-    if name == "Mask" then return end
-
     if items.is_gear_piece_name(name) then
         add_armor(out, armor_seen, items.resolve_item_label(name, piece_model))
     end
