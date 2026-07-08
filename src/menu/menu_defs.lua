@@ -7,6 +7,50 @@ local menu_util = July.require("core.menu_util")
 local M = {}
 M.TAB = constants.TAB
 
+local function register_loot_type_toggles(TAB, G, parent)
+    local ids = {}
+    for i = 1, #loot_catalog.LOOT_TYPES do
+        local entry = loot_catalog.LOOT_TYPES[i]
+        menu.add_checkbox(TAB, G, entry.key, entry.display, true, {
+            parent = parent,
+            colorpicker = entry.color,
+        })
+        menu_util.COLOR_DEFAULTS[entry.key] = entry.color
+        ids[#ids + 1] = entry.key
+    end
+    for i = 1, #loot_catalog.DROP_TYPES do
+        local entry = loot_catalog.DROP_TYPES[i]
+        menu.add_checkbox(TAB, G, entry.key, entry.display, true, {
+            parent = parent,
+            colorpicker = entry.color,
+        })
+        menu_util.COLOR_DEFAULTS[entry.key] = entry.color
+        ids[#ids + 1] = entry.key
+    end
+    local body = loot_catalog.BODY_BAG_TYPE
+    menu.add_checkbox(TAB, G, body.key, body.display, true, {
+        parent = parent,
+        colorpicker = body.color,
+    })
+    menu_util.COLOR_DEFAULTS[body.key] = body.color
+    ids[#ids + 1] = body.key
+    return ids
+end
+
+local function register_trap_type_toggles(TAB, G, parent)
+    local ids = {}
+    for i = 1, #trap_types.TRAP_TYPES do
+        local entry = trap_types.TRAP_TYPES[i]
+        menu.add_checkbox(TAB, G, entry.key, entry.display, true, {
+            parent = parent,
+            colorpicker = entry.color,
+        })
+        menu_util.COLOR_DEFAULTS[entry.key] = entry.color
+        ids[#ids + 1] = entry.key
+    end
+    return ids
+end
+
 function M.register_all()
     if M._registered then return end
     M._registered = true
@@ -14,16 +58,16 @@ function M.register_all()
     local TAB = M.TAB
     local G = menu_util.G
     local P_AIM = "havoc_aimbot_enabled"
-    local P_SILENT = "july_silent_aim"
+    local P_AIM_KEY = "havoc_aimbot_keybind"
     local P_NPC = "havoc_npc_enabled"
     local P_LOOT = "havoc_loot_enabled"
     local P_TRAP = "havoc_trap_enabled"
-    local S = "july_silent_"
 
     menu_util.ensure_groups()
 
-    -- Row 1: Aimbot | Silent Aim
-    menu_util.register_keybind(TAB, G.AIMBOT, P_AIM, "Enable Aimbot", false)
+    -- Row 1: Aimbot | NPC Visuals
+    menu.add_checkbox(TAB, G.AIMBOT, P_AIM, "Enable Aimbot", false)
+    menu_util.register_feature_keybind(TAB, G.AIMBOT, P_AIM, P_AIM_KEY, "Aimbot Keybind", false)
     menu.add_combo(TAB, G.AIMBOT, "havoc_aimbot_bone", "Aimbot Target Bone", combat_menu.SILENT_BONES, 1, { parent = P_AIM })
     menu.add_combo(TAB, G.AIMBOT, "havoc_aimbot_target_type", "Aimbot Priority", { "Crosshair", "Distance" }, 0, { parent = P_AIM })
     menu.add_slider_int(TAB, G.AIMBOT, "havoc_aimbot_fov", "Aimbot FOV Radius", 10, 500, 150, { parent = P_AIM })
@@ -44,36 +88,12 @@ function M.register_all()
     menu.add_checkbox(TAB, G.AIMBOT, "havoc_aimbot_rainbow", "Aimbot Rainbow", false, { parent = P_AIM })
 
     menu_util.bind_children(P_AIM, {
-        P_AIM .. "_mode",
+        P_AIM_KEY, P_AIM_KEY .. "_mode",
         "havoc_aimbot_bone", "havoc_aimbot_target_type", "havoc_aimbot_fov", "havoc_aimbot_max_distance",
         "havoc_aimbot_smooth", "havoc_aimbot_sticky", "havoc_aimbot_target_players", "havoc_aimbot_target_npcs",
         "havoc_aimbot_draw_fov", "havoc_aimbot_fill_fov", "havoc_aimbot_target_line", "havoc_aimbot_rainbow",
     })
 
-    menu_util.register_keybind(TAB, G.SILENT, P_SILENT, "Enable Silent Aim", false)
-    combat_menu.register_silent_aim(TAB, G.SILENT, S, P_SILENT)
-    menu.add_checkbox(TAB, G.SILENT, "july_silent_draw_fov", "Silent FOV Circle", false, {
-        parent = P_SILENT, colorpicker = { 0.55, 0.2, 1.0, 1.0 },
-    })
-    menu.add_combo(TAB, G.SILENT, "july_silent_fov_style", "Silent FOV Style", { "Outline", "Filled Circle" }, 1, { parent = P_SILENT })
-    menu.add_checkbox(TAB, G.SILENT, "july_silent_target_line", "Silent Target Line", false, {
-        parent = P_SILENT, colorpicker = { 1.0, 0.25, 0.25, 1.0 },
-    })
-    menu.add_checkbox(TAB, G.SILENT, "july_silent_rainbow", "Silent Rainbow", false, { parent = P_SILENT })
-
-    menu_util.bind_children(P_SILENT, {
-        P_SILENT .. "_mode",
-        S .. "target_type", S .. "bone",
-        S .. "filter_health", S .. "filter_visible", S .. "filter_team",
-        S .. "target_players", S .. "target_npcs", S .. "target_npc_soldiers", S .. "target_npc_bosses",
-        S .. "max_dist", S .. "fov", S .. "sticky",
-        S .. "bullet_manip", S .. "manip_dist", S .. "manip_status", S .. "manip_ring", S .. "manip_peek_vis",
-        "july_silent_draw_fov", "july_silent_fov_style", "july_silent_target_line", "july_silent_rainbow",
-    })
-    menu_util.bind_children(S .. "target_npcs", { S .. "target_npc_soldiers", S .. "target_npc_bosses" })
-    menu_util.bind_children(S .. "bullet_manip", { S .. "manip_dist", S .. "manip_status", S .. "manip_ring", S .. "manip_peek_vis" })
-
-    -- Row 2: NPC Visuals | World Visuals
     menu_util.register_keybind(TAB, G.NPC, P_NPC, "Enable NPC Visuals", false)
     menu.add_checkbox(TAB, G.NPC, "havoc_npc_show_scav", "Show Scavs", true, { parent = P_NPC })
     menu.add_checkbox(TAB, G.NPC, "havoc_npc_show_boss", "Show Bosses", true, { parent = P_NPC })
@@ -125,38 +145,63 @@ function M.register_all()
     menu_util.bind_children("havoc_npc_health_text", { "havoc_npc_health_text_size" })
     menu_util.bind_children("havoc_npc_chams", { "havoc_npc_chams_style" })
 
-    menu_util.register_keybind(TAB, G.WORLD, P_LOOT, "Enable Loot ESP", false)
-    menu.add_multicombo(TAB, G.WORLD, "havoc_loot_types", "Loot Types",
-        loot_catalog.MULTICOMBO_LABELS, loot_catalog.MULTICOMBO_DEFAULTS, { parent = P_LOOT })
-    menu.add_checkbox(TAB, G.WORLD, "havoc_loot_box", "Loot Box", false,
+    -- Row 2: Loot ESP | Trap ESP
+    menu_util.register_keybind(TAB, G.LOOT, P_LOOT, "Enable Loot ESP", false)
+    local loot_type_ids = register_loot_type_toggles(TAB, G.LOOT, P_LOOT)
+    menu.add_checkbox(TAB, G.LOOT, "havoc_loot_box", "Loot Box", false,
         { parent = P_LOOT, colorpicker = { 1.0, 1.0, 1.0, 1.0 } })
-    menu.add_combo(TAB, G.WORLD, "havoc_loot_box_style", "Loot Box Style",
+    menu.add_combo(TAB, G.LOOT, "havoc_loot_box_style", "Loot Box Style",
         { "Corners", "Outline", "3D Box" }, 2, { parent = "havoc_loot_box" })
-    menu.add_checkbox(TAB, G.WORLD, "havoc_loot_distance", "Loot Show Distance", false, { parent = P_LOOT })
-    menu.add_combo(TAB, G.WORLD, "havoc_loot_distance_pos", "Loot Distance Position",
+    menu.add_checkbox(TAB, G.LOOT, "havoc_loot_distance", "Loot Show Distance", false, { parent = P_LOOT })
+    menu.add_combo(TAB, G.LOOT, "havoc_loot_distance_pos", "Loot Distance Position",
         { "Same Line", "Below Name", "Left Of Name", "Right Of Name" }, 0, { parent = "havoc_loot_distance" })
-    menu.add_checkbox(TAB, G.WORLD, "havoc_loot_marker", "Loot Position Marker", false, { parent = P_LOOT })
-    menu.add_combo(TAB, G.WORLD, "havoc_loot_filter", "Loot Filter",
+    menu.add_checkbox(TAB, G.LOOT, "havoc_loot_marker", "Loot Position Marker", false, { parent = P_LOOT })
+    menu.add_combo(TAB, G.LOOT, "havoc_loot_filter", "Loot Filter",
         { "Show All", "Show Locked Only", "Show Unlocked Only", "Show Opened Only", "Show Unopened Only" }, 0,
         { parent = P_LOOT })
-    menu.add_checkbox(TAB, G.WORLD, "havoc_loot_rainbow", "Loot Rainbow", false, { parent = P_LOOT })
-    menu.add_slider_int(TAB, G.WORLD, "havoc_loot_max_distance", "Loot Max Distance", 0, 2000, 500, { parent = P_LOOT })
-    menu.add_slider_int(TAB, G.WORLD, "havoc_loot_text_size", "Loot Text Size", 1, 15, 13, { parent = P_LOOT })
-    menu_util.register_keybind(TAB, G.WORLD, P_TRAP, "Enable Trap ESP", false)
-    menu.add_multicombo(TAB, G.WORLD, "havoc_trap_types", "Trap Types",
-        trap_types.MULTICOMBO_LABELS, trap_types.MULTICOMBO_DEFAULTS, { parent = P_TRAP })
-    menu.add_checkbox(TAB, G.WORLD, "havoc_trap_box", "Trap Box", false,
-        { parent = P_TRAP, colorpicker = { 1.0, 0.35, 0.25, 1.0 } })
-    menu.add_combo(TAB, G.WORLD, "havoc_trap_box_style", "Trap Box Style",
-        { "Corners", "Outline", "3D Box" }, 2, { parent = "havoc_trap_box" })
-    menu.add_checkbox(TAB, G.WORLD, "havoc_trap_distance", "Trap Show Distance", false, { parent = P_TRAP })
-    menu.add_combo(TAB, G.WORLD, "havoc_trap_distance_pos", "Trap Distance Position",
-        { "Same Line", "Below Name", "Left Of Name", "Right Of Name" }, 0, { parent = "havoc_trap_distance" })
-    menu.add_checkbox(TAB, G.WORLD, "havoc_trap_marker", "Trap Position Marker", false, { parent = P_TRAP })
-    menu.add_checkbox(TAB, G.WORLD, "havoc_trap_rainbow", "Trap Rainbow", false, { parent = P_TRAP })
-    menu.add_slider_int(TAB, G.WORLD, "havoc_trap_max_distance", "Trap Max Distance", 0, 2000, 500, { parent = P_TRAP })
-    menu.add_slider_int(TAB, G.WORLD, "havoc_trap_text_size", "Trap Text Size", 1, 15, 13, { parent = P_TRAP })
+    menu.add_checkbox(TAB, G.LOOT, "havoc_loot_rainbow", "Loot Rainbow", false, { parent = P_LOOT })
+    menu.add_slider_int(TAB, G.LOOT, "havoc_loot_max_distance", "Loot Max Distance", 0, 2000, 500, { parent = P_LOOT })
+    menu.add_slider_int(TAB, G.LOOT, "havoc_loot_text_size", "Loot Text Size", 1, 15, 13, { parent = P_LOOT })
 
+    menu_util.register_keybind(TAB, G.TRAP, P_TRAP, "Enable Trap ESP", false)
+    local trap_type_ids = register_trap_type_toggles(TAB, G.TRAP, P_TRAP)
+    menu.add_checkbox(TAB, G.TRAP, "havoc_trap_box", "Trap Box", false,
+        { parent = P_TRAP, colorpicker = { 1.0, 0.35, 0.25, 1.0 } })
+    menu.add_combo(TAB, G.TRAP, "havoc_trap_box_style", "Trap Box Style",
+        { "Corners", "Outline", "3D Box" }, 2, { parent = "havoc_trap_box" })
+    menu.add_checkbox(TAB, G.TRAP, "havoc_trap_distance", "Trap Show Distance", false, { parent = P_TRAP })
+    menu.add_combo(TAB, G.TRAP, "havoc_trap_distance_pos", "Trap Distance Position",
+        { "Same Line", "Below Name", "Left Of Name", "Right Of Name" }, 0, { parent = "havoc_trap_distance" })
+    menu.add_checkbox(TAB, G.TRAP, "havoc_trap_marker", "Trap Position Marker", false, { parent = P_TRAP })
+    menu.add_checkbox(TAB, G.TRAP, "havoc_trap_rainbow", "Trap Rainbow", false, { parent = P_TRAP })
+    menu.add_slider_int(TAB, G.TRAP, "havoc_trap_max_distance", "Trap Max Distance", 0, 2000, 500, { parent = P_TRAP })
+    menu.add_slider_int(TAB, G.TRAP, "havoc_trap_text_size", "Trap Text Size", 1, 15, 13, { parent = P_TRAP })
+
+    local loot_children = {
+        "havoc_loot_box", "havoc_loot_distance", "havoc_loot_marker",
+        "havoc_loot_filter", "havoc_loot_rainbow", "havoc_loot_max_distance", "havoc_loot_text_size",
+        P_LOOT .. "_mode",
+    }
+    for i = 1, #loot_type_ids do
+        loot_children[#loot_children + 1] = loot_type_ids[i]
+    end
+    menu_util.bind_children(P_LOOT, loot_children)
+    menu_util.bind_children("havoc_loot_box", { "havoc_loot_box_style" })
+    menu_util.bind_children("havoc_loot_distance", { "havoc_loot_distance_pos" })
+
+    local trap_children = {
+        "havoc_trap_box", "havoc_trap_distance", "havoc_trap_marker",
+        "havoc_trap_rainbow", "havoc_trap_max_distance", "havoc_trap_text_size",
+        P_TRAP .. "_mode",
+    }
+    for i = 1, #trap_type_ids do
+        trap_children[#trap_children + 1] = trap_type_ids[i]
+    end
+    menu_util.bind_children(P_TRAP, trap_children)
+    menu_util.bind_children("havoc_trap_box", { "havoc_trap_box_style" })
+    menu_util.bind_children("havoc_trap_distance", { "havoc_trap_distance_pos" })
+
+    -- Row 3: World Visuals | Config
     menu.add_checkbox(TAB, G.WORLD, "havoc_target_gear", "Target Gear Viewer", false)
     menu.add_slider_int(TAB, G.WORLD, "havoc_target_gear_fov", "Target Gear FOV", 40, 400, 150,
         { parent = "havoc_target_gear" })
@@ -165,20 +210,6 @@ function M.register_all()
     menu.add_slider_int(TAB, G.WORLD, "havoc_target_gear_top", "Top Offset", 48, 160, 88,
         { parent = "havoc_target_gear" })
 
-    menu_util.bind_children(P_LOOT, {
-        "havoc_loot_types", "havoc_loot_box", "havoc_loot_distance", "havoc_loot_marker",
-        "havoc_loot_filter", "havoc_loot_rainbow", "havoc_loot_max_distance", "havoc_loot_text_size",
-        P_LOOT .. "_mode",
-    })
-    menu_util.bind_children("havoc_loot_box", { "havoc_loot_box_style" })
-    menu_util.bind_children("havoc_loot_distance", { "havoc_loot_distance_pos" })
-    menu_util.bind_children(P_TRAP, {
-        "havoc_trap_types", "havoc_trap_box", "havoc_trap_distance", "havoc_trap_marker",
-        "havoc_trap_rainbow", "havoc_trap_max_distance", "havoc_trap_text_size",
-        P_TRAP .. "_mode",
-    })
-    menu_util.bind_children("havoc_trap_box", { "havoc_trap_box_style" })
-    menu_util.bind_children("havoc_trap_distance", { "havoc_trap_distance_pos" })
     menu_util.bind_children("havoc_target_gear", {
         "havoc_target_gear_fov", "havoc_target_gear_gear_size", "havoc_target_gear_top",
     })

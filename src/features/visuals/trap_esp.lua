@@ -50,7 +50,6 @@ function M.render(cam_pos)
     if #trap_cache == 0 then return end
 
     local constants = July.require("core.constants")
-    local type_vals = settings.get("havoc_trap_types", {})
     local show_dist = settings.bool("havoc_trap_distance", false)
     local dist_pos = settings.num("havoc_trap_distance_pos", 0)
     local show_marker = settings.bool("havoc_trap_marker", false)
@@ -68,7 +67,7 @@ function M.render(cam_pos)
     for i = 1, #trap_cache do
         local trap = trap_cache[i]
         if not trap.root or not env.is_valid(trap.root) then goto continue end
-        if not trap_types.is_enabled(type_vals, trap.trap_type) then goto continue end
+        if not trap_types.is_enabled(trap.trap_type) then goto continue end
         if not trap.pos then goto continue end
 
         local dsq = dist_sq(cam_pos, trap.pos)

@@ -2,7 +2,7 @@
 
 **July** is a [Project Vector](https://project-vector-1.gitbook.io/vector-lua-engine/) script for **Havoc** on Roblox (place `16530963934`).
 
-NPC ESP, loot ESP, trap ESP, aimbot, silent aim, weapon mods, and config save/load — all from one loadstring.
+NPC ESP, loot ESP, trap ESP, aimbot, silent aim, target gear viewer, and config save/load — all from one loadstring.
 
 ---
 
@@ -25,7 +25,7 @@ Menu: **Scripts → July**
 | **NPC Visuals** | Multi-select display options with per-type default colors |
 | **Loot** | Multi-select loot types dropdown (33+ types) with themed colors |
 | **Traps** | Multi-select trap types with default warning colors |
-| **Weapon Mods** | Multi-select: no recoil, spread, sway, fast velocity |
+| **Target Gear** | Shows locked aimbot/silent target loadout with item icons |
 | **Config** | Save/load to `C:/July_Config.txt` |
 
 ---

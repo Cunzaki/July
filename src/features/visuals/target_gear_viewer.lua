@@ -6,7 +6,6 @@ local items = July.require("game.items")
 local target_gear = July.require("game.target_gear")
 local entity_scan = July.require("game.entity_scan")
 local targeting = July.require("features.combat.targeting")
-local silent_aim = July.require("features.combat.silent_aim")
 local aimbot = July.require("features.combat.aimbot")
 local env = July.require("core.env")
 
@@ -146,14 +145,7 @@ local function combat_target_allowed(target)
 end
 
 local function get_combat_target()
-    if settings.enabled("july_silent_aim") then
-        local target = silent_aim.get_locked_target()
-        if target and combat_target_allowed(target) then
-            return target
-        end
-    end
-
-    if settings.enabled("havoc_aimbot_enabled") then
+    if settings.bool("havoc_aimbot_enabled", false) and settings.enabled("havoc_aimbot_keybind") then
         local target = aimbot.get_current_target()
         if target and combat_target_allowed(target) then
             return target

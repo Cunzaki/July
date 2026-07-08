@@ -151,6 +151,7 @@ function M.render(cam_pos)
         esp_opts.health = health
         esp_opts.max_health = max_health
         esp_opts.held_item = held_on and held_name or nil
+        esp_opts.held_item_slot = held_on
         esp_opts.held_item_color = ent_rgb or held_color
         esp_opts.npc_type = npc_type
 

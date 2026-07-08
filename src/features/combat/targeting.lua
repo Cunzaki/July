@@ -3,9 +3,7 @@ local math_util = July.require("core.math_util")
 local env = July.require("core.env")
 local entity_scan = July.require("game.entity_scan")
 local combat_origin = July.require("game.combat_origin")
-local silent_ray = July.require("core.silent_ray")
 local npc_types = July.require("game.npc_types")
-local ballistic = July.require("core.ballistic")
 local weapons = July.require("game.weapons")
 local hitparts = July.require("game.hitparts")
 
@@ -286,10 +284,9 @@ local function target_velocity(target)
     return { x = 0, y = 0, z = 0 }
 end
 
-function M.predict_point(origin, point, target, weapon_name)
-    if not origin or not point then return point end
-    weapon_name = weapon_name or weapons.cached_held()
-    return ballistic.predict_for_weapon(origin, point, target_velocity(target), weapon_name)
+local function resolve_origin()
+    combat_origin.sync_weapon(weapons.cached_held())
+    return combat_origin.get_fire_origin()
 end
 
 local function passes_team(target, prefix)
@@ -386,11 +383,6 @@ function M.collect_candidates(prefix)
     end
 
     return out
-end
-
-local function resolve_origin()
-    combat_origin.sync_weapon(weapons.cached_held())
-    return silent_ray.get_camera_origin() or combat_origin.get_fire_origin()
 end
 
 local function evaluate_candidate(target, bone_label, cx, cy, fov_sq, origin, prefix, crosshair_prio)

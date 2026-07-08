@@ -18,8 +18,8 @@ local function now()
 end
 
 local function combat_active()
-    return settings.enabled("july_silent_aim")
-        or settings.enabled("havoc_aimbot_enabled")
+    return settings.bool("havoc_aimbot_enabled", false)
+        and settings.enabled("havoc_aimbot_keybind")
 end
 
 local function any_world_esp()

@@ -204,25 +204,108 @@ local function is_character_ancestor(inst)
     return false
 end
 
-local function is_weld_pool(inst)
-    if not inst or not env.is_valid(inst) then return false end
-
+local function get_weld_temp_others()
     local ws = env.get_workspace()
-    if not ws then return false end
+    if not ws then return nil end
+    return ws:FindFirstChild("_weldobjects.temp.others")
+end
 
-    local ignored = ws:FindFirstChild("Ignored")
-    if ignored then
-        local temp = ignored:FindFirstChild("_weldobjects.temp")
-        if temp and is_descendant_of(inst, temp) then return true end
-    end
+local function is_in_world_weld_temp(inst)
+    local temp = get_weld_temp_folder()
+    return temp and is_descendant_of(inst, temp)
+end
 
-    local pool_names = { "_weldobjects.temp", "_weldobjects.temp.others" }
-    for i = 1, #pool_names do
-        local pool = ws:FindFirstChild(pool_names[i])
-        if pool and is_descendant_of(inst, pool) then return true end
+local function is_in_equipped_weld_pool(inst)
+    local others = get_weld_temp_others()
+    return others and is_descendant_of(inst, others)
+end
+
+local function is_on_viewmodel(inst)
+    if not inst then return false end
+    local ws = env.get_workspace()
+    if ws then
+        local vm = ws:FindFirstChild("__viewmodel")
+        if vm and is_descendant_of(inst, vm) then return true end
     end
+    if workspace and workspace.CurrentCamera and is_descendant_of(inst, workspace.CurrentCamera) then
+        return true
+    end
+    return false
+end
+
+local function is_world_drop_model(model)
+    if not model or not env.is_valid(model) then return false end
+    if is_player_owned(model) then return false end
+    if is_character_ancestor(model) then return false end
+    if is_on_viewmodel(model) then return false end
+    if is_in_equipped_weld_pool(model) then return false end
+    if is_in_world_weld_temp(model) then return true end
+
+    local objects = get_objects_folder()
+    if objects and is_descendant_of(model, objects) then return true end
 
     return false
+end
+
+local function resolve_grid_folder_name(folder)
+    if not folder then return nil end
+    local display = string_value(folder, "name")
+    if display and display ~= "" then return display end
+    local folder_name = folder.Name
+    if folder_name and folder_name ~= "" then return folder_name end
+    return nil
+end
+
+local function resolve_grid_item_type(folder)
+    if not folder then return nil end
+    return string_value(folder, "itemType") or string_value(folder, "category")
+end
+
+local function find_grid_folder_for_weld(weld_model)
+    local grid = get_grid_item_folder()
+    if not grid or not weld_model then return nil end
+
+    local ok, children = pcall(function() return grid:GetChildren() end)
+    if not ok or not children then return nil end
+
+    for i = 1, #children do
+        scan_yield.yield()
+        local folder = children[i]
+        if folder.ClassName == "Folder" then
+            local weld = object_value_target(folder, "currentWeldModel")
+            if weld == weld_model then
+                return folder
+            end
+        end
+    end
+
+    return nil
+end
+
+local function resolve_drop_name_from_sources(inst, grid_folder)
+    if grid_folder then
+        local grid_name = resolve_grid_folder_name(grid_folder)
+        if grid_name and grid_name ~= "" then
+            return grid_name
+        end
+    end
+    return resolve_drop_name(inst)
+end
+
+local function categorize_drop(name, grid_folder)
+    if tier_util.is_keycard(name) then
+        return loot_catalog.TYPE_MAP["drop.keycard"]
+    end
+
+    local item_type = grid_folder and resolve_grid_item_type(grid_folder)
+    if item_type == "gun" or item_type == "weapon" then
+        return loot_catalog.TYPE_MAP["drop.gun"]
+    end
+    if tier_util.is_gun_name(name) then
+        return loot_catalog.TYPE_MAP["drop.gun"]
+    end
+
+    return loot_catalog.TYPE_MAP["drop.item"]
 end
 
 local function has_equipped_link(inst)
@@ -397,23 +480,11 @@ local function get_objects_folder()
     return objects_folder
 end
 
-local function is_world_drop_weld(model)
-    if not model or not env.is_valid(model) then return false end
-    if is_player_owned(model) then return false end
-    if is_character_ancestor(model) then return false end
-    if is_weld_pool(model) then return false end
-
-    local objects = get_objects_folder()
-    if objects and is_descendant_of(model, objects) then return true end
-
-    return false
-end
-
 local function should_skip_drop_inst(inst)
     if not env.is_valid(inst) then return true end
-
     if is_character_ancestor(inst) then return true end
-    if is_weld_pool(inst) then return true end
+    if is_in_equipped_weld_pool(inst) then return true end
+    if is_on_viewmodel(inst) then return true end
 
     if inst.ClassName == "Tool" and is_equipped_tool(inst) then
         return true
@@ -426,66 +497,12 @@ local function should_skip_drop_inst(inst)
     end)
     if ok and flag then return true end
 
-    if has_equipped_link(inst) and not is_world_drop_weld(inst) then
-        return true
-    end
-
     if inst.ClassName == "Model" then
         local type_str = get_loot_info(inst)
         if type_str then return true end
     end
 
     return false
-end
-
-local function is_drop_candidate(inst)
-    if should_skip_drop_inst(inst) then return false end
-    if is_player_owned(inst) then return false end
-
-    local cls = inst.ClassName
-    if cls == "Tool" then
-        return inst:FindFirstChild("Handle") ~= nil
-    end
-
-    if cls == "Model" and inst:FindFirstChildOfClass("Humanoid") then
-        return false
-    end
-
-    if is_grid_item_folder(inst) then
-        local weld = object_value_target(inst, "currentWeldModel")
-        if weld and not is_world_drop_weld(weld) then
-            return false
-        end
-        return resolve_drop_name(inst) ~= nil
-            or object_value_target(inst, "itemTool") ~= nil
-            or weld ~= nil
-    end
-
-    if cls == "Model" or cls == "Folder" then
-        local weld = object_value_target(inst, "currentWeldModel")
-        if weld and not is_world_drop_weld(weld) then
-            return false
-        end
-        local name = resolve_drop_name(inst)
-        if name then return true end
-        return object_value_target(inst, "itemTool") ~= nil or weld ~= nil
-    end
-
-    if cls == "Part" or cls == "MeshPart" then
-        return resolve_drop_name(inst) ~= nil
-    end
-
-    return false
-end
-
-local function categorize_drop(name)
-    if tier_util.is_keycard(name) then
-        return loot_catalog.TYPE_MAP["drop.keycard"]
-    end
-    if tier_util.is_gun_name(name) then
-        return loot_catalog.TYPE_MAP["drop.gun"]
-    end
-    return loot_catalog.TYPE_MAP["drop.item"]
 end
 
 local function get_or_create_drop(model, root, category, display_name)
@@ -521,12 +538,86 @@ local function get_or_create_drop(model, root, category, display_name)
     return entry
 end
 
-local function register_drop_instance(inst, out, seen)
-    if seen[inst] or not is_drop_candidate(inst) then return end
+local function register_drop_entry(cache_key, root, category, display_name, out, seen)
+    if seen[cache_key] then return end
+    if not root or not env.is_valid(root) then return end
+    if not display_name or display_name == "" then return end
 
-    local name = resolve_drop_name(inst)
+    seen[cache_key] = true
+    out[#out + 1] = get_or_create_drop(cache_key, root, category, display_name)
+end
+
+local function register_grid_drop(folder, out, seen)
+    if not folder or not env.is_valid(folder) or seen[folder] then return end
+    if should_skip_drop_inst(folder) then return end
+
+    local weld = object_value_target(folder, "currentWeldModel")
+    if not weld or not env.is_valid(weld) then return end
+    if not is_world_drop_model(weld) then return end
+
+    local name = resolve_drop_name_from_sources(weld, folder)
+    if not name or name == "" then return end
+
+    local root = resolve_drop_root(folder) or resolve_drop_root(weld)
+    if not root or not env.is_valid(root) then return end
+
+    local category = categorize_drop(name, folder)
+    register_drop_entry(folder, root, category, name, out, seen)
+end
+
+local function register_weld_drop(weld_model, out, seen)
+    if not weld_model or not env.is_valid(weld_model) or seen[weld_model] then return end
+    if should_skip_drop_inst(weld_model) then return end
+    if not is_world_drop_model(weld_model) then return end
+
+    local grid_folder = find_grid_folder_for_weld(weld_model)
+    if grid_folder then
+        register_grid_drop(grid_folder, out, seen)
+        return
+    end
+
+    local name = resolve_drop_name_from_sources(weld_model, nil)
     if not name or name == "" then
-        if inst.ClassName == "Tool" then
+        name = weld_model.Name
+    end
+    if not name or name == "" then return end
+
+    local root = resolve_drop_root(weld_model)
+    if not root or not env.is_valid(root) then return end
+
+    local category = categorize_drop(name, nil)
+    register_drop_entry(weld_model, root, category, name, out, seen)
+end
+
+local function register_drop_instance(inst, out, seen)
+    if not inst or not env.is_valid(inst) then return end
+
+    if is_grid_item_folder(inst) then
+        register_grid_drop(inst, out, seen)
+        return
+    end
+
+    if inst.ClassName == "Model" and is_world_drop_model(inst) then
+        register_weld_drop(inst, out, seen)
+        return
+    end
+
+    if should_skip_drop_inst(inst) or is_player_owned(inst) then return end
+
+    local cls = inst.ClassName
+    if cls == "Tool" then
+        if not inst:FindFirstChild("Handle") then return end
+    elseif cls == "Model" then
+        if inst:FindFirstChildOfClass("Humanoid") then return end
+        if not is_world_drop_model(inst) then return end
+    elseif cls ~= "Folder" and cls ~= "Part" and cls ~= "MeshPart" then
+        return
+    end
+
+    local grid_folder = find_grid_folder_for_weld(inst)
+    local name = resolve_drop_name_from_sources(inst, grid_folder)
+    if not name or name == "" then
+        if cls == "Tool" then
             name = inst.Name
         else
             local tool = object_value_target(inst, "itemTool")
@@ -538,24 +629,9 @@ local function register_drop_instance(inst, out, seen)
     local root = resolve_drop_root(inst)
     if not root or not env.is_valid(root) then return end
 
-    seen[inst] = true
-    local category = categorize_drop(name)
-    out[#out + 1] = get_or_create_drop(inst, root, category, name)
-end
-
-local function collect_drops_from_list(instances, out, seen)
-    for i = 1, #instances do
-        scan_yield.yield()
-        local inst = instances[i]
-        if not inst or not env.is_valid(inst) then goto continue_drop end
-
-        local cls = inst.ClassName
-        if cls == "Tool" or cls == "Model" or cls == "Folder" or cls == "Part" or cls == "MeshPart" then
-            register_drop_instance(inst, out, seen)
-        end
-
-        ::continue_drop::
-    end
+    local cache_key = grid_folder or inst
+    local category = categorize_drop(name, grid_folder)
+    register_drop_entry(cache_key, root, category, name, out, seen)
 end
 
 local function collect_drops(container, out, seen, depth)
@@ -580,27 +656,45 @@ local function collect_drops(container, out, seen, depth)
     end
 end
 
+local function collect_grid_world_drops(out, seen)
+    local grid = get_grid_item_folder()
+    if not grid or not env.is_valid(grid) then return end
+
+    local ok, children = pcall(function() return grid:GetChildren() end)
+    if not ok or not children then return end
+
+    for i = 1, #children do
+        scan_yield.yield()
+        local folder = children[i]
+        if folder.ClassName == "Folder" then
+            register_grid_drop(folder, out, seen)
+        end
+    end
+end
+
+local function collect_weld_temp_drops(out, seen)
+    local temp = get_weld_temp_folder()
+    if not temp or not env.is_valid(temp) then return end
+
+    local ok, children = pcall(function() return temp:GetChildren() end)
+    if not ok or not children then return end
+
+    for i = 1, #children do
+        scan_yield.yield()
+        local child = children[i]
+        if child.ClassName == "Model" then
+            register_weld_drop(child, out, seen)
+        end
+    end
+end
+
 local function collect_objects_drops_deep(out, seen)
+    collect_weld_temp_drops(out, seen)
+    collect_grid_world_drops(out, seen)
+
     local folder = get_objects_folder()
     if folder and env.is_valid(folder) then
         collect_drops(folder, out, seen, 0)
-    end
-
-    local grid_folder = get_grid_item_folder()
-    if grid_folder and env.is_valid(grid_folder) then
-        local ok, children = pcall(function() return grid_folder:GetChildren() end)
-        if ok and children then
-            for i = 1, #children do
-                scan_yield.yield()
-                local child = children[i]
-                if child.ClassName == "Folder" then
-                    local weld = object_value_target(child, "currentWeldModel")
-                    if weld and is_world_drop_weld(weld) then
-                        register_drop_instance(child, out, seen)
-                    end
-                end
-            end
-        end
     end
 end
 
@@ -830,13 +924,22 @@ function M.compact_invalid(force)
 end
 
 local function combat_active()
-    return settings.enabled("july_silent_aim")
-        or settings.enabled("havoc_aimbot_enabled")
+    return settings.bool("havoc_aimbot_enabled", false)
+        and settings.enabled("havoc_aimbot_keybind")
 end
 
 local function refresh_entry_pos(loot)
     if loot.is_drop then
-        local root = resolve_drop_root(loot.model) or loot.root
+        local root = loot.root
+        if loot.model and env.is_valid(loot.model) then
+            if is_grid_item_folder(loot.model) then
+                local weld = object_value_target(loot.model, "currentWeldModel")
+                if weld and env.is_valid(weld) then
+                    root = resolve_drop_root(weld) or root
+                end
+            end
+            root = resolve_drop_root(loot.model) or root
+        end
         if root and env.is_valid(root) then
             loot.root = root
         end

@@ -134,19 +134,16 @@ function M.resolve(loot_type_str, model_name)
     return nil
 end
 
-function M.is_enabled(vals, category)
-    if not category then return false end
-    local idx = M.KEY_TO_INDEX[category.key]
-    if not idx then return false end
-    if type(vals) ~= "table" then return true end
-    local v = vals[idx]
-    if v == nil then return true end
-    return v == true
+function M.is_enabled(category)
+    if not category or not category.key then return false end
+    local settings = July.require("core.settings")
+    return settings.bool(category.key, true)
 end
 
 function M.get_color(category)
-    if category and category.color then return category.color end
-    return { 1, 1, 1, 1 }
+    if not category or not category.key then return { 1, 1, 1, 1 } end
+    local settings = July.require("core.settings")
+    return settings.color(category.key, category.color or { 1, 1, 1, 1 })
 end
 
 return M

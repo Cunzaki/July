@@ -19,7 +19,6 @@ const DEFAULT_DUMP = path.join(
 );
 
 const OUT_DIR = path.join(ROOT, "dump");
-const REF_DIR = path.join(ROOT, "references", "dump");
 
 const input = process.argv[2] || DEFAULT_DUMP;
 
@@ -388,7 +387,6 @@ async function main() {
   };
 
   ensureDir(OUT_DIR);
-  ensureDir(REF_DIR);
 
   const gameRef = buildGameReference({
     placeId,
@@ -412,7 +410,6 @@ async function main() {
   ensureDir(path.join(OUT_DIR, "assets"));
 
   fs.writeFileSync(path.join(OUT_DIR, "GAME_REFERENCE.txt"), gameRef);
-  fs.writeFileSync(path.join(REF_DIR, "GAME_REFERENCE.txt"), gameRef);
   fs.writeFileSync(path.join(gameDataDir, "loot_models.txt"), lootModels.join("\n"));
   fs.writeFileSync(path.join(gameDataDir, "traps.txt"), traps.join("\n"));
   fs.writeFileSync(path.join(gameDataDir, "gun_config_keys.txt"), gunConfigKeys.join("\n"));

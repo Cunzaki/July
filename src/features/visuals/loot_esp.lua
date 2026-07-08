@@ -88,7 +88,6 @@ function M.render(cam_pos)
 
     local constants = July.require("core.constants")
 
-    local type_vals = settings.get("havoc_loot_types", {})
     local show_dist = settings.bool("havoc_loot_distance", false)
     local dist_pos = settings.num("havoc_loot_distance_pos", 0)
     local show_marker = settings.bool("havoc_loot_marker", false)
@@ -106,7 +105,7 @@ function M.render(cam_pos)
 
     for i = 1, n do
         local loot = loot_cache[i]
-        if loot.pos and loot.category and env.is_valid(loot.model) and loot_catalog.is_enabled(type_vals, loot.category) then
+        if loot.pos and loot.category and env.is_valid(loot.model) and loot_catalog.is_enabled(loot.category) then
             if loot_passes_filter(filter_idx, loot.is_open, loot.is_locked, loot.is_drop) then
                 local dsq = dist_sq(cam_pos, loot.pos)
                 if dsq <= max_dist_sq and (loot.is_drop or dsq > constants.ESP_HIDE_SQ) then

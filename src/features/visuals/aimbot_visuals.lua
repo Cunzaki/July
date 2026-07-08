@@ -5,7 +5,7 @@ local aimbot = July.require("features.combat.aimbot")
 local M = {}
 
 function M.render()
-    if not settings.enabled("havoc_aimbot_enabled") then return end
+    if not settings.bool("havoc_aimbot_enabled", false) then return end
 
     local state = aimbot.draw_state
     if state.scx == nil then return end

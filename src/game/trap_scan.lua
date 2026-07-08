@@ -314,7 +314,7 @@ function M.refresh_live()
     local cache = July.require("core.cache")
     local settings = July.require("core.settings")
     local refresh_pos = cache.should_refresh_positions(
-        settings.enabled("july_silent_aim") or settings.enabled("havoc_aimbot_enabled")
+        settings.bool("havoc_aimbot_enabled", false) and settings.enabled("havoc_aimbot_keybind")
     )
 
     local batch = constants.TRAP_LIVE_BATCH or 16

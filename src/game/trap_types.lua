@@ -20,16 +20,16 @@ for i = 1, #M.TRAP_TYPES do
     M.KEY_TO_INDEX[M.TRAP_TYPES[i].key] = i
 end
 
-function M.is_enabled(vals, trap_type)
-    if type(vals) ~= "table" or not trap_type then return false end
-    local idx = M.KEY_TO_INDEX[trap_type.key]
-    if not idx then return false end
-    return vals[idx] == true
+function M.is_enabled(trap_type)
+    if not trap_type or not trap_type.key then return false end
+    local settings = July.require("core.settings")
+    return settings.bool(trap_type.key, true)
 end
 
 function M.get_color(trap_type)
-    if trap_type and trap_type.color then return trap_type.color end
-    return { 1, 0.2, 0, 1 }
+    if not trap_type or not trap_type.key then return { 1, 0.2, 0, 1 } end
+    local settings = July.require("core.settings")
+    return settings.color(trap_type.key, trap_type.color or { 1, 0.2, 0, 1 })
 end
 
 return M

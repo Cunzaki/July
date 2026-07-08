@@ -27,9 +27,7 @@ function M.invalidate_all()
     July.require("game.entity_scan").invalidate()
     July.require("game.loot_scan").invalidate()
     July.require("game.trap_scan").invalidate()
-    July.require("core.silent_ray").reset_session()
     July.require("features.combat.aimbot").reset()
-    July.require("features.combat.silent_aim").reset()
     July.require("game.combat_origin").invalidate()
 end
 

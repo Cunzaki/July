@@ -5,12 +5,10 @@ local config = July.require("features.utility.config")
 local session = July.require("core.session")
 local esp_scheduler = July.require("core.esp_scheduler")
 local aimbot = July.require("features.combat.aimbot")
-local silent_aim = July.require("features.combat.silent_aim")
 local npc_esp = July.require("features.visuals.npc_esp")
 local loot_esp = July.require("features.visuals.loot_esp")
 local trap_esp = July.require("features.visuals.trap_esp")
 local aimbot_visuals = July.require("features.visuals.aimbot_visuals")
-local silent_visuals = July.require("features.visuals.silent_visuals")
 local target_gear_viewer = July.require("features.visuals.target_gear_viewer")
 
 local M = {}
@@ -48,7 +46,7 @@ function M.update()
 
     esp_scheduler.tick(frame_counter)
 
-    if settings.enabled("havoc_aimbot_enabled") then
+    if settings.bool("havoc_aimbot_enabled", false) and settings.enabled("havoc_aimbot_keybind") then
         aimbot_tick_counter = aimbot_tick_counter + 1
         if aimbot_tick_counter >= constants.AIMBOT_TICK_INTERVAL then
             aimbot_tick_counter = 0
@@ -57,12 +55,6 @@ function M.update()
     else
         aimbot_tick_counter = 0
         aimbot.reset()
-    end
-
-    if settings.enabled("july_silent_aim") then
-        silent_aim.tick()
-    else
-        silent_aim.reset()
     end
 
     target_gear_viewer.update()
@@ -78,7 +70,6 @@ function M.update()
     loot_esp.render(cam_pos)
     trap_esp.render(cam_pos)
     aimbot_visuals.render()
-    silent_visuals.render()
     target_gear_viewer.draw()
 end
 

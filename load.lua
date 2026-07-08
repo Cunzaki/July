@@ -1,20 +1,18 @@
--- Load teleport bypass first, then July.
-local BYPASS_URL = "https://raw.githubusercontent.com/Cunzaki/July/refs/heads/main/bypass.lua"
-local JULY_URL = "https://raw.githubusercontent.com/Cunzaki/July/refs/heads/main/july.lua"
+-- Load July (local bundled file first, then GitHub).
+local REMOTE_URL = "https://raw.githubusercontent.com/Cunzaki/July/refs/heads/main/july.lua"
 
-local function load_local_bypass()
+local LOCAL_PATHS = {
+    "july.lua",
+    "July/july.lua",
+}
+
+local function try_load_local()
     if not loadfile then
         return false
     end
 
-    local paths = {
-        "bypass.lua",
-        "July/bypass.lua",
-        "C:/Users/Cunza/Desktop/Vector Fallen V2/July/bypass.lua",
-    }
-
-    for i = 1, #paths do
-        local fn = loadfile(paths[i])
+    for i = 1, #LOCAL_PATHS do
+        local fn = loadfile(LOCAL_PATHS[i])
         if fn then
             fn()
             return true
@@ -24,32 +22,6 @@ local function load_local_bypass()
     return false
 end
 
-if not load_local_bypass() then
-    utility.load_url(BYPASS_URL)
-end
-
-local function load_local_july()
-    if not loadfile then
-        return false
-    end
-
-    local paths = {
-        "july.lua",
-        "July/july.lua",
-        "C:/Users/Cunza/Desktop/Vector Fallen V2/July/july.lua",
-    }
-
-    for i = 1, #paths do
-        local fn = loadfile(paths[i])
-        if fn then
-            fn()
-            return true
-        end
-    end
-
-    return false
-end
-
-if not load_local_july() then
-    utility.load_url(JULY_URL)
+if not try_load_local() then
+    utility.load_url(REMOTE_URL)
 end

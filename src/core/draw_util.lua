@@ -274,6 +274,9 @@ function M.draw_esp(bounds, name_str, dist_val, opts)
         local tw = draw.GetTextSize(opts.held_item, his)
         draw.Text(bounds.x + (bounds.w - tw) * 0.5, below_y, opts.held_item, opts.held_item_color, his)
         below_y = below_y + his + 2
+    elseif opts.held_item_slot then
+        local his = opts.held_item_size or 10
+        below_y = below_y + his + 2
     end
 
     if opts.dist then

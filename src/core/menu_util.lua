@@ -10,8 +10,9 @@ M.TAB = "July"
 
 M.G = {
     AIMBOT = "Aimbot",
-    SILENT = "Silent Aim",
     NPC = "NPC Visuals",
+    LOOT = "Loot ESP",
+    TRAP = "Trap ESP",
     WORLD = "World Visuals",
     CONFIG = "Config",
 }
@@ -40,9 +41,9 @@ function M.ensure_groups()
     M.ensure_tab()
 
     local rows = {
-        { M.G.AIMBOT, M.G.SILENT },
-        { M.G.NPC, M.G.WORLD },
-        { M.G.CONFIG },
+        { M.G.AIMBOT, M.G.NPC },
+        { M.G.LOOT, M.G.TRAP },
+        { M.G.WORLD, M.G.CONFIG },
     }
 
     for _, row in ipairs(rows) do
@@ -134,8 +135,6 @@ M.COLOR_DEFAULTS = {
     havoc_aimbot_draw_fov = { 1.0, 1.0, 1.0, 1.0 },
     havoc_aimbot_fill_fov = { 1.0, 1.0, 1.0, 0.15 },
     havoc_aimbot_target_line = { 1.0, 0.3, 0.3, 1.0 },
-    july_silent_draw_fov = { 0.55, 0.2, 1.0, 1.0 },
-    july_silent_target_line = { 1.0, 0.25, 0.25, 1.0 },
     havoc_npc_box = { 1.0, 1.0, 1.0, 1.0 },
     havoc_npc_box_fill = { 1.0, 1.0, 1.0, 0.35 },
     havoc_npc_name = { 0.92, 0.92, 0.92, 1.0 },
@@ -207,6 +206,26 @@ function M.register_keybind(T, G, id, label, default, extra)
         id = id,
         mode_id = mode_id,
         key_id = id,
+    })
+
+    return mode_id
+end
+
+function M.register_feature_keybind(T, G, master_id, keybind_id, label, default, extra)
+    extra = extra or {}
+    local root = M.parent(master_id)
+    local cb_opts = { show_mode = false, key = extra.key or 0, parent = master_id }
+    if extra.colorpicker then cb_opts.colorpicker = extra.colorpicker end
+
+    menu.add_checkbox(T, G, keybind_id, label, default or false, cb_opts)
+
+    local mode_id = keybind_id .. "_mode"
+    menu.add_combo(T, G, mode_id, label .. " Mode", { "Toggle", "Hold" }, 0, root)
+
+    July.require("core.feature_bind").register({
+        id = keybind_id,
+        mode_id = mode_id,
+        key_id = keybind_id,
     })
 
     return mode_id

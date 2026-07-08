@@ -135,19 +135,45 @@ end
 
 local function smooth_mouse(sx, sy, scx, scy, smooth)
     if not input or not input.move_mouse then return false end
+
     local dx, dy = sx - scx, sy - scy
-    local mx, my = dx / smooth, dy / smooth
-    if dx > 0 and mx < 0.5 then mx = 0.5 elseif dx < 0 and mx > -0.5 then mx = -0.5 end
-    if dy > 0 and my < 0.5 then my = 0.5 elseif dy < 0 and my > -0.5 then my = -0.5 end
+    local dist_sq = dx * dx + dy * dy
+    if dist_sq < 2.25 then return false end
+
+    local smooth_val = math.max(1, smooth)
+    local factor = 1 / smooth_val
+    local mx, my = dx * factor, dy * factor
+
+    local step = math.sqrt(mx * mx + my * my)
+    local max_step = math.min(dist_sq ^ 0.5 * 0.92, 120 / smooth_val)
+    if step > max_step and step > 0 then
+        local scale = max_step / step
+        mx = mx * scale
+        my = my * scale
+    end
+
+    if math.abs(mx) < 0.01 and math.abs(my) < 0.01 then return false end
     input.move_mouse(mx, my)
     return true
 end
 
-local function aim_at(target, smooth)
+local function refresh_target_hit(target, bone_idx, cam_pos, max_dist, scx, scy, fov, crosshair_prio)
+    if not target then return nil end
+    if target.kind == "npc" then
+        return evaluate_npc(target.ent, bone_idx, cam_pos, max_dist, scx, scy, fov, crosshair_prio)
+    end
+    if target.kind == "player" then
+        return evaluate_player(target.player, bone_idx, cam_pos, max_dist, scx, scy, fov, crosshair_prio)
+    end
+    return nil
+end
+
+local function aim_at(target, smooth, scx, scy)
     if not target or not target.pos then return false end
     if not input or not input.move_mouse then return false end
 
-    local scx, scy = screen_center()
+    scx = scx or select(1, screen_center())
+    scy = scy or select(2, screen_center())
     local sx, sy = target.sx, target.sy
     if not sx or not sy then
         local vis
@@ -200,8 +226,13 @@ local function sticky_valid(target, cam_pos, scx, scy, fov, bone_idx, max_dist)
 end
 
 function M.tick()
-    if not settings.enabled("havoc_aimbot_enabled") then
+    if not settings.bool("havoc_aimbot_enabled", false) then
         M.reset()
+        return
+    end
+
+    if not settings.enabled("havoc_aimbot_keybind") then
+        M.draw_state.active = false
         return
     end
 
@@ -260,10 +291,31 @@ function M.tick()
     end
 
     if target then
+        local refreshed = refresh_target_hit(
+            target, bone_idx, cam_pos, max_dist, scx, scy, fov, crosshair_prio
+        )
+        if refreshed then
+            target = refreshed
+            if sticky then
+                locked_ent = target
+            else
+                current_target = target
+            end
+        else
+            target = nil
+            if sticky then
+                locked_ent = nil
+            else
+                current_target = nil
+            end
+        end
+    end
+
+    if target then
         M.draw_state.active = true
         M.draw_state.tx = target.sx
         M.draw_state.ty = target.sy
-        aim_at(target, smooth)
+        aim_at(target, smooth, scx, scy)
     else
         M.draw_state.active = false
     end
