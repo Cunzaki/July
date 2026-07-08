@@ -67,7 +67,7 @@ function M.register_all()
 
     -- Row 1: Aimbot | NPC Visuals
     menu.add_checkbox(TAB, G.AIMBOT, P_AIM, "Enable Aimbot", false)
-    menu_util.register_feature_keybind(TAB, G.AIMBOT, P_AIM, P_AIM_KEY, "Aimbot Keybind", false)
+    menu_util.register_master_keybind(TAB, G.AIMBOT, P_AIM, P_AIM_KEY, "Aimbot Key")
     menu.add_combo(TAB, G.AIMBOT, "havoc_aimbot_bone", "Aimbot Target Bone", combat_menu.SILENT_BONES, 1, { parent = P_AIM })
     menu.add_combo(TAB, G.AIMBOT, "havoc_aimbot_target_type", "Aimbot Priority", { "Crosshair", "Distance" }, 0, { parent = P_AIM })
     menu.add_slider_int(TAB, G.AIMBOT, "havoc_aimbot_fov", "Aimbot FOV Radius", 10, 500, 150, { parent = P_AIM })
@@ -113,6 +113,12 @@ function M.register_all()
     menu.add_checkbox(TAB, G.NPC, "havoc_npc_held_item", "NPC Held Item", false,
         { parent = P_NPC, colorpicker = { 1.0, 0.85, 0.4, 1.0 } })
     menu.add_slider_int(TAB, G.NPC, "havoc_npc_held_item_size", "NPC Held Item Size", 6, 18, 10, { parent = "havoc_npc_held_item" })
+    menu.add_checkbox(TAB, G.NPC, "havoc_npc_ammo", "NPC Ammo", false,
+        { parent = P_NPC, colorpicker = { 0.55, 0.85, 1.0, 1.0 } })
+    menu.add_slider_int(TAB, G.NPC, "havoc_npc_ammo_size", "NPC Ammo Size", 6, 18, 9, { parent = "havoc_npc_ammo" })
+    menu.add_checkbox(TAB, G.NPC, "havoc_npc_reloading", "NPC Reloading", false,
+        { parent = P_NPC, colorpicker = { 1.0, 0.45, 0.2, 1.0 } })
+    menu.add_slider_int(TAB, G.NPC, "havoc_npc_reloading_size", "NPC Reloading Size", 6, 18, 9, { parent = "havoc_npc_reloading" })
     menu.add_checkbox(TAB, G.NPC, "havoc_npc_npc_type", "NPC Type Tag", false,
         { parent = P_NPC, colorpicker = { 1.0, 0.5, 0.0, 0.85 } })
     menu.add_slider_int(TAB, G.NPC, "havoc_npc_npc_type_size", "NPC Type Tag Size", 6, 18, 9, { parent = "havoc_npc_npc_type" })
@@ -133,7 +139,8 @@ function M.register_all()
     menu_util.bind_children(P_NPC, {
         "havoc_npc_show_scav", "havoc_npc_show_boss", "havoc_npc_show_sniper",
         "havoc_npc_box", "havoc_npc_name", "havoc_npc_distance", "havoc_npc_held_item", "havoc_npc_npc_type",
-        "havoc_npc_health_bar", "havoc_npc_health_text", "havoc_npc_chams", "havoc_npc_skeleton",
+        "havoc_npc_health_bar", "havoc_npc_health_text", "havoc_npc_ammo", "havoc_npc_reloading",
+        "havoc_npc_chams", "havoc_npc_skeleton",
         "havoc_npc_hide_dead", "havoc_npc_rainbow", "havoc_npc_max_distance",
         P_NPC .. "_mode",
     })
@@ -141,6 +148,8 @@ function M.register_all()
     menu_util.bind_children("havoc_npc_name", { "havoc_npc_name_size" })
     menu_util.bind_children("havoc_npc_distance", { "havoc_npc_distance_size" })
     menu_util.bind_children("havoc_npc_held_item", { "havoc_npc_held_item_size" })
+    menu_util.bind_children("havoc_npc_ammo", { "havoc_npc_ammo_size" })
+    menu_util.bind_children("havoc_npc_reloading", { "havoc_npc_reloading_size" })
     menu_util.bind_children("havoc_npc_npc_type", { "havoc_npc_npc_type_size" })
     menu_util.bind_children("havoc_npc_health_text", { "havoc_npc_health_text_size" })
     menu_util.bind_children("havoc_npc_chams", { "havoc_npc_chams_style" })
@@ -202,6 +211,15 @@ function M.register_all()
     menu_util.bind_children("havoc_trap_distance", { "havoc_trap_distance_pos" })
 
     -- Row 3: World Visuals | Config
+    menu.add_checkbox(TAB, G.WORLD, "havoc_local_ammo", "Show Ammo", false,
+        { colorpicker = { 0.55, 0.85, 1.0, 1.0 } })
+    menu.add_slider_int(TAB, G.WORLD, "havoc_local_ammo_size", "Ammo Text Size", 8, 24, 12,
+        { parent = "havoc_local_ammo" })
+    menu.add_checkbox(TAB, G.WORLD, "havoc_local_reloading", "Show Reloading", false,
+        { colorpicker = { 1.0, 0.45, 0.2, 1.0 } })
+    menu.add_slider_int(TAB, G.WORLD, "havoc_local_reloading_size", "Reloading Text Size", 8, 24, 12,
+        { parent = "havoc_local_reloading" })
+
     menu.add_checkbox(TAB, G.WORLD, "havoc_target_gear", "Target Gear Viewer", false)
     menu.add_slider_int(TAB, G.WORLD, "havoc_target_gear_fov", "Target Gear FOV", 40, 400, 150,
         { parent = "havoc_target_gear" })
@@ -210,12 +228,89 @@ function M.register_all()
     menu.add_slider_int(TAB, G.WORLD, "havoc_target_gear_top", "Top Offset", 48, 160, 88,
         { parent = "havoc_target_gear" })
 
+    menu_util.bind_children("havoc_local_ammo", { "havoc_local_ammo_size" })
+    menu_util.bind_children("havoc_local_reloading", { "havoc_local_reloading_size" })
+
     menu_util.bind_children("havoc_target_gear", {
         "havoc_target_gear_fov", "havoc_target_gear_gear_size", "havoc_target_gear_top",
     })
 
     menu_util.sync_masters()
     menu_util.seed_color_defaults()
+
+    M._config_registry = M.build_config_registry(loot_type_ids, trap_type_ids)
+end
+
+function M.build_config_registry(loot_type_ids, trap_type_ids)
+    local P_AIM = "havoc_aimbot_enabled"
+    local P_AIM_KEY = "havoc_aimbot_keybind"
+    local P_NPC = "havoc_npc_enabled"
+    local P_LOOT = "havoc_loot_enabled"
+    local P_TRAP = "havoc_trap_enabled"
+
+    local value_ids = {
+        P_AIM,
+        P_AIM_KEY, P_AIM_KEY .. "_mode",
+        "havoc_aimbot_bone", "havoc_aimbot_target_type",
+        "havoc_aimbot_fov", "havoc_aimbot_max_distance", "havoc_aimbot_smooth", "havoc_aimbot_sticky",
+        "havoc_aimbot_target_players", "havoc_aimbot_target_npcs",
+        "havoc_aimbot_draw_fov", "havoc_aimbot_fill_fov", "havoc_aimbot_target_line", "havoc_aimbot_rainbow",
+        P_NPC, P_NPC .. "_mode",
+        "havoc_npc_show_scav", "havoc_npc_show_boss", "havoc_npc_show_sniper",
+        "havoc_npc_box", "havoc_npc_box_style", "havoc_npc_box_fill",
+        "havoc_npc_name", "havoc_npc_name_size",
+        "havoc_npc_distance", "havoc_npc_distance_size",
+        "havoc_npc_held_item", "havoc_npc_held_item_size",
+        "havoc_npc_ammo", "havoc_npc_ammo_size",
+        "havoc_npc_reloading", "havoc_npc_reloading_size",
+        "havoc_npc_npc_type", "havoc_npc_npc_type_size",
+        "havoc_npc_health_bar", "havoc_npc_health_text", "havoc_npc_health_text_size",
+        "havoc_npc_chams", "havoc_npc_chams_style",
+        "havoc_npc_skeleton", "havoc_npc_hide_dead", "havoc_npc_rainbow",
+        "havoc_npc_max_distance",
+        P_LOOT, P_LOOT .. "_mode",
+        "havoc_loot_box", "havoc_loot_box_style",
+        "havoc_loot_distance", "havoc_loot_distance_pos",
+        "havoc_loot_marker", "havoc_loot_filter", "havoc_loot_rainbow",
+        "havoc_loot_max_distance", "havoc_loot_text_size",
+        P_TRAP, P_TRAP .. "_mode",
+        "havoc_trap_box", "havoc_trap_box_style",
+        "havoc_trap_distance", "havoc_trap_distance_pos",
+        "havoc_trap_marker", "havoc_trap_rainbow",
+        "havoc_trap_max_distance", "havoc_trap_text_size",
+        "havoc_local_ammo", "havoc_local_ammo_size",
+        "havoc_local_reloading", "havoc_local_reloading_size",
+        "havoc_target_gear", "havoc_target_gear_fov", "havoc_target_gear_gear_size", "havoc_target_gear_top",
+    }
+
+    local color_ids = {
+        "havoc_aimbot_draw_fov", "havoc_aimbot_fill_fov", "havoc_aimbot_target_line",
+        "havoc_loot_box",
+        "havoc_trap_box",
+        "havoc_npc_box", "havoc_npc_box_fill", "havoc_npc_name", "havoc_npc_distance",
+        "havoc_npc_held_item", "havoc_npc_ammo", "havoc_npc_reloading", "havoc_npc_npc_type",
+        "havoc_npc_health_text",
+        "havoc_npc_chams", "havoc_npc_skeleton",
+        "havoc_local_ammo", "havoc_local_reloading",
+    }
+
+    for i = 1, #(loot_type_ids or {}) do
+        value_ids[#value_ids + 1] = loot_type_ids[i]
+        color_ids[#color_ids + 1] = loot_type_ids[i]
+    end
+    for i = 1, #(trap_type_ids or {}) do
+        value_ids[#value_ids + 1] = trap_type_ids[i]
+        color_ids[#color_ids + 1] = trap_type_ids[i]
+    end
+
+    return {
+        value_ids = value_ids,
+        color_ids = color_ids,
+    }
+end
+
+function M.get_config_registry()
+    return M._config_registry
 end
 
 return M

@@ -17,8 +17,9 @@ local function url_for(asset_id_or_url)
     local asset_id = type(asset_id_or_url) == "number" and tostring(asset_id_or_url)
         or (type(asset_id_or_url) == "string" and asset_id_or_url:match("^(%d+)$"))
     if not asset_id or asset_id == "0" then return nil end
-    return rbx_asset_url(asset_id)
-        or asset_urls.decal_url(asset_id)
+    return asset_urls.decal_url(asset_id)
+        or asset_urls.item_png(asset_id)
+        or rbx_asset_url(asset_id)
         or asset_urls.roblox_thumb(asset_id)
         or asset_urls.roblox_thumb_legacy(asset_id)
         or asset_urls.asset_delivery(asset_id)
@@ -45,11 +46,15 @@ end
 local FALLBACKS = {
     function(entry)
         if not entry.asset_id then return nil end
-        return rbx_asset_url(entry.asset_id)
+        return asset_urls.decal_url(entry.asset_id)
     end,
     function(entry)
         if not entry.asset_id then return nil end
-        return asset_urls.decal_url(entry.asset_id)
+        return asset_urls.item_png(entry.asset_id)
+    end,
+    function(entry)
+        if not entry.asset_id then return nil end
+        return rbx_asset_url(entry.asset_id)
     end,
     function(entry)
         if not entry.asset_id then return nil end

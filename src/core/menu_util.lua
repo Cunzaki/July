@@ -146,6 +146,8 @@ M.COLOR_DEFAULTS = {
     havoc_npc_skeleton = { 1.0, 1.0, 1.0, 1.0 },
     havoc_loot_box = { 1.0, 1.0, 1.0, 1.0 },
     havoc_trap_box = { 1.0, 0.35, 0.25, 1.0 },
+    havoc_local_ammo = { 0.55, 0.85, 1.0, 1.0 },
+    havoc_local_reloading = { 1.0, 0.45, 0.2, 1.0 },
 }
 
 function M.seed_color_defaults()
@@ -226,6 +228,27 @@ function M.register_feature_keybind(T, G, master_id, keybind_id, label, default,
         id = keybind_id,
         mode_id = mode_id,
         key_id = keybind_id,
+    })
+
+    return mode_id
+end
+
+function M.register_master_keybind(T, G, master_id, key_id, label, extra)
+    extra = extra or {}
+    local root = M.parent(master_id)
+    local cb_opts = { show_mode = false, key = extra.key or 0, parent = master_id }
+    if extra.colorpicker then cb_opts.colorpicker = extra.colorpicker end
+
+    menu.add_checkbox(T, G, key_id, label, false, cb_opts)
+
+    local mode_id = key_id .. "_mode"
+    menu.add_combo(T, G, mode_id, label .. " Mode", { "Toggle", "Hold" }, 0, root)
+
+    July.require("core.feature_bind").register({
+        id = key_id,
+        master_id = master_id,
+        mode_id = mode_id,
+        key_id = key_id,
     })
 
     return mode_id

@@ -291,6 +291,20 @@ function M.draw_esp(bounds, name_str, dist_val, opts)
         local nts = opts.npc_type_size or 9
         local nw = draw.GetTextSize(opts.npc_type, nts)
         draw.Text(bounds.x + (bounds.w - nw) * 0.5, below_y, opts.npc_type, opts.npc_type_color, nts)
+        below_y = below_y + nts + 2
+    end
+
+    if opts.flags then
+        local flag_fs = opts.flag_size or 9
+        for i = 1, #opts.flags do
+            local flag = opts.flags[i]
+            if flag and flag.text and flag.text ~= "" then
+                local color = flag.color or { 1, 1, 1, 1 }
+                local tw = draw.GetTextSize(flag.text, flag_fs)
+                draw.Text(bounds.x + (bounds.w - tw) * 0.5, below_y, flag.text, color, flag_fs)
+                below_y = below_y + flag_fs + 2
+            end
+        end
     end
 end
 

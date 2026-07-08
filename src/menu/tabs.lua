@@ -9,6 +9,7 @@ local npc_esp = July.require("features.visuals.npc_esp")
 local loot_esp = July.require("features.visuals.loot_esp")
 local trap_esp = July.require("features.visuals.trap_esp")
 local aimbot_visuals = July.require("features.visuals.aimbot_visuals")
+local local_weapon_hud = July.require("features.visuals.local_weapon_hud")
 local target_gear_viewer = July.require("features.visuals.target_gear_viewer")
 
 local M = {}
@@ -38,7 +39,6 @@ function M.update()
     end
 
     frame_counter = frame_counter + 1
-    npc_esp.set_frame_counter(frame_counter)
 
     session.tick()
     July.require("core.feature_bind").tick()
@@ -46,11 +46,16 @@ function M.update()
 
     esp_scheduler.tick(frame_counter)
 
-    if settings.bool("havoc_aimbot_enabled", false) and settings.enabled("havoc_aimbot_keybind") then
-        aimbot_tick_counter = aimbot_tick_counter + 1
-        if aimbot_tick_counter >= constants.AIMBOT_TICK_INTERVAL then
+    if settings.bool("havoc_aimbot_enabled", false) then
+        aimbot.update_visuals()
+        if settings.enabled("havoc_aimbot_keybind") then
+            aimbot_tick_counter = aimbot_tick_counter + 1
+            if aimbot_tick_counter >= constants.AIMBOT_TICK_INTERVAL then
+                aimbot_tick_counter = 0
+                aimbot.tick()
+            end
+        else
             aimbot_tick_counter = 0
-            aimbot.tick()
         end
     else
         aimbot_tick_counter = 0
@@ -70,6 +75,7 @@ function M.update()
     loot_esp.render(cam_pos)
     trap_esp.render(cam_pos)
     aimbot_visuals.render()
+    local_weapon_hud.render()
     target_gear_viewer.draw()
 end
 

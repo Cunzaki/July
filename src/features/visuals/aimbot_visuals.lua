@@ -27,7 +27,7 @@ function M.render()
         draw.Circle(state.scx, state.scy, state.fov, fov_color, 48)
     end
 
-    if state.active and settings.bool("havoc_aimbot_target_line", false) then
+    if state.has_target and settings.bool("havoc_aimbot_target_line", false) then
         local line_color = aimbot_rgb or settings.color("havoc_aimbot_target_line", { 1, 0.3, 0.3, 1 })
         draw.Line(state.scx, state.scy, state.tx, state.ty, line_color)
     end

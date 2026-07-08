@@ -5,23 +5,6 @@ local tier_util = July.require("game.tier_util")
 
 local M = {}
 
-local ATTACHMENT_SLOT_HINTS = {
-    p1 = true, p2 = true, p3 = true, p4 = true,
-    slot1 = true, slot2 = true, slot3 = true,
-    sight = true, muzzle = true, underbarrel = true,
-    foregrip = true, tactical = true,
-}
-
-local function is_attachment_slot_name(name)
-    if not name or name == "" then return true end
-    if name:match("^%d+$") then return true end
-    local lower = name:lower()
-    if ATTACHMENT_SLOT_HINTS[lower] then return true end
-    if lower:match("^p%d+$") then return true end
-    if lower:match("^slot%d+$") then return true end
-    return false
-end
-
 local function resolve_character_model(target)
     if not target then return nil end
     if target.is_npc then
@@ -49,74 +32,6 @@ local function add_armor(out, seen, piece)
         piece.slot = gear_types.get_slot(piece.name)
     end
     out.armor[#out.armor + 1] = piece
-end
-
-local function add_attachment(out, seen, label, model)
-    if not label or label == "" or is_attachment_slot_name(label) then return end
-    if seen[label] then return end
-    seen[label] = true
-    local piece = items.resolve_item_label(label, model)
-    if piece then
-        out.attachments[#out.attachments + 1] = piece
-    end
-end
-
-local function scan_attachments_folder(folder, model, out, seen)
-    if not folder or not env.is_valid(folder) then return end
-    local ok, children = pcall(function() return folder:GetChildren() end)
-    if not ok or not children then return end
-    for i = 1, #children do
-        local child = children[i]
-        if child.ClassName == "Folder" or child.ClassName == "Model" then
-            add_attachment(out, seen, child.Name, model)
-        end
-    end
-end
-
-local function scan_mods_folder(mods, model, out, seen)
-    if not mods or not env.is_valid(mods) then return end
-    local ok, slots = pcall(function() return mods:GetChildren() end)
-    if not ok or not slots then return end
-    for i = 1, #slots do
-        local slot = slots[i]
-        if slot.ClassName == "Folder" then
-            local ok2, slot_children = pcall(function() return slot:GetChildren() end)
-            if ok2 and slot_children then
-                for j = 1, #slot_children do
-                    local item = slot_children[j]
-                    if item.ClassName == "Folder" or item.ClassName == "Model" then
-                        add_attachment(out, seen, item.Name, model)
-                    end
-                end
-            end
-        end
-    end
-end
-
-local function scan_tool_attachments(tool, model, out, seen)
-    if not tool or not env.is_valid(tool) then return end
-
-    local data = env.find_child(tool, "_data")
-    if data then
-        scan_mods_folder(env.find_child(data, "mods"), model, out, seen)
-
-        local mag = env.find_child(data, "magAttached")
-        if mag then
-            local ok, value = pcall(function() return mag.Value end)
-            if ok and value and value ~= "" then
-                add_attachment(out, seen, value, model)
-            end
-        end
-    end
-
-    scan_attachments_folder(env.find_child(tool, "Attachments"), model, out, seen)
-
-    local weapon = env.find_child(tool, "Weapon")
-    if weapon then
-        scan_attachments_folder(env.find_child(weapon, "Attachments"), model, out, seen)
-    end
-
-    scan_attachments_folder(env.find_child(tool, "_at"), model, out, seen)
 end
 
 local function resolve_held(model)
@@ -247,7 +162,7 @@ local function collect_weld_pools(model)
     return pools
 end
 
-local function scan_gear_model(piece_model, out, armor_seen, att_seen)
+local function scan_gear_model(piece_model, out, armor_seen)
     if not piece_model or not env.is_valid(piece_model) then return end
     if piece_model.ClassName ~= "Model" then return end
 
@@ -255,33 +170,72 @@ local function scan_gear_model(piece_model, out, armor_seen, att_seen)
     if items.is_gear_piece_name(name) then
         add_armor(out, armor_seen, items.resolve_item_label(name, piece_model))
     end
-
-    scan_attachments_folder(env.find_child(piece_model, "_at"), piece_model, out, att_seen)
 end
 
-local function scan_weld_folder(weld, out, armor_seen, att_seen)
+local function scan_weld_folder(weld, out, armor_seen)
     if not weld or not env.is_valid(weld) then return end
 
     local ok, children = pcall(function() return weld:GetChildren() end)
     if not ok or not children then return end
 
     for i = 1, #children do
-        scan_gear_model(children[i], out, armor_seen, att_seen)
+        scan_gear_model(children[i], out, armor_seen)
     end
 end
 
-local function scan_weld_objects(model, out, armor_seen, att_seen)
+local function scan_weld_objects(model, out, armor_seen)
     local pools = collect_weld_pools(model)
     for i = 1, #pools do
-        scan_weld_folder(pools[i], out, armor_seen, att_seen)
+        scan_weld_folder(pools[i], out, armor_seen)
+    end
+end
+
+local function scan_backpack_items(backpack, out)
+    if not backpack or not env.is_valid(backpack) then return end
+
+    local seen = {}
+    local ok, children = pcall(function() return backpack:GetChildren() end)
+    if not ok or not children then return end
+
+    for i = 1, #children do
+        local child = children[i]
+        local name = child.Name
+        if not name or name == "" or seen[name] then goto continue_child end
+
+        local is_item = child.ClassName == "Tool"
+            or (child.ClassName == "Model" and (tier_util.is_gun_name(name) or items.is_gear_piece_name(name)))
+
+        if is_item then
+            seen[name] = true
+            out.stash[#out.stash + 1] = items.resolve_item_label(name, child)
+        end
+
+        ::continue_child::
+    end
+end
+
+local function scan_npc_held(model, ent, out)
+    local held_name, tool_inst = resolve_held(model)
+    if not held_name and ent then
+        held_name = ent.held_name or ent._held_name
+        if held_name and held_name ~= "" then
+            local child = env.find_child(model, held_name)
+            if child and env.is_valid(child) then
+                tool_inst = child
+            end
+        end
+    end
+
+    if held_name then
+        out.held = items.resolve_item_label(held_name, tool_inst or model)
     end
 end
 
 local function scan_character(model)
     local out = {
         held = nil,
-        attachments = {},
         armor = {},
+        stash = {},
     }
 
     if not model or not env.is_valid(model) then return out end
@@ -291,56 +245,47 @@ local function scan_character(model)
         out.held = items.resolve_item_label(held_name, tool_inst or model)
     end
 
-    local att_seen = {}
-    scan_tool_attachments(tool_inst, model, out, att_seen)
-
-    if not tool_inst then
-        local ok, children = pcall(function() return model:GetChildren() end)
-        if ok and children then
-            for i = 1, #children do
-                local child = children[i]
-                if child.ClassName == "Tool" or (child.ClassName == "Model" and tier_util.is_gun_name(child.Name)) then
-                    scan_tool_attachments(child, model, out, att_seen)
-                end
-            end
-        end
-    end
-
     if not out.held then
         scan_holsters(model, out)
     end
 
     local armor_seen = {}
-    scan_weld_objects(model, out, armor_seen, att_seen)
+    scan_weld_objects(model, out, armor_seen)
 
     return out
 end
 
 function M.scan_npc(ent)
     local model = resolve_character_model(ent)
-    if not model then
-        return { held = nil, attachments = {}, armor = {} }
-    end
+    local out = {
+        held = nil,
+        armor = {},
+        stash = {},
+        is_npc = true,
+    }
+    if not model then return out end
 
-    local out = scan_character(model)
-    local held_name = ent.held_name or ent._held_name
-    if not out.held and held_name and held_name ~= "" then
-        out.held = items.resolve_item_label(held_name, model)
-    end
+    scan_npc_held(model, ent, out)
     return out
 end
 
 function M.scan_player(player)
     local model = resolve_character_model({ player = player, is_npc = false })
     if not model then
-        return { held = nil, attachments = {}, armor = {} }
+        return { held = nil, armor = {}, stash = {} }
     end
-    return scan_character(model)
+
+    local out = scan_character(model)
+    local backpack = player.Backpack or player.backpack
+    if backpack then
+        scan_backpack_items(backpack, out)
+    end
+    return out
 end
 
 function M.scan_target(target)
     if not target then
-        return { held = nil, attachments = {}, armor = {} }
+        return { held = nil, armor = {}, stash = {} }
     end
     if target.is_npc then
         return M.scan_npc(target)

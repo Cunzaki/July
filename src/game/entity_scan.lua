@@ -2,6 +2,7 @@ local constants = July.require("core.constants")
 local scan_yield = July.require("core.scan_yield")
 local havoc_sync = July.require("game.havoc_sync")
 local npc_types = July.require("game.npc_types")
+local tier_util = July.require("game.tier_util")
 local env = July.require("core.env")
 
 local M = {}
@@ -227,20 +228,65 @@ function M.refresh()
     end
 end
 
-local function get_held_weapon_name(model)
-    if not model then return nil end
+local function get_held_weapon_inst(model)
+    if not model then return nil, nil end
 
     local ok, model_children = pcall(function() return model:GetChildren() end)
     if ok and model_children then
         for i = 1, #model_children do
             local child = model_children[i]
             if child.ClassName == "Tool" then
-                return child.Name
+                return child.Name, child
+            end
+            if child.ClassName == "Model" and tier_util.is_gun_name(child.Name) then
+                return child.Name, child
             end
         end
     end
 
-    return nil
+    return nil, nil
+end
+
+local function get_held_weapon_name(model)
+    local name = get_held_weapon_inst(model)
+    return name
+end
+
+local function refresh_weapon_state(ent)
+    local _, weapon = get_held_weapon_inst(ent.model)
+    if not weapon then
+        ent._ammo_current = nil
+        ent._reloading = nil
+        return
+    end
+
+    local data = env.find_child(weapon, "_data")
+    if not data then
+        ent._ammo_current = nil
+        ent._reloading = nil
+        return
+    end
+
+    local ammo = env.find_child(data, "ammoCurrent")
+    if ammo then
+        local ok, value = pcall(function() return ammo.Value end)
+        ent._ammo_current = ok and value or nil
+    else
+        ent._ammo_current = nil
+    end
+
+    local reload = env.find_child(data, "reload")
+    if reload then
+        local reloading = env.find_child(reload, "reloading")
+        if reloading then
+            local ok, value = pcall(function() return reloading.Value end)
+            ent._reloading = ok and value == true or false
+        else
+            ent._reloading = nil
+        end
+    else
+        ent._reloading = nil
+    end
 end
 
 local HELD_EMPTY_CLEAR_TICKS = 45
@@ -284,6 +330,7 @@ function M.refresh_live()
             ent.is_boss = is_boss
             ent.is_sniper = is_sniper
             refresh_held_name(ent)
+            refresh_weapon_state(ent)
         end
         entity_live_cursor = entity_live_cursor + 1
         if entity_live_cursor > n then entity_live_cursor = 1 end

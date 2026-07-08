@@ -58,6 +58,7 @@ const ORDER = [
   "features/visuals/loot_esp.lua",
   "features/visuals/trap_esp.lua",
   "features/visuals/aimbot_visuals.lua",
+  "features/visuals/local_weapon_hud.lua",
   "features/visuals/target_gear_viewer.lua",
   "menu/tabs.lua",
   "app.lua",

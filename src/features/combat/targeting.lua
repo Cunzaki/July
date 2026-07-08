@@ -162,26 +162,18 @@ function M.closest_bone_world(target, cx, cy)
     cy = cy or 0
     local best, best_d = nil, math.huge
 
-    if M.is_npc_target(target) then
-        local head = M.bone_world(target, "Head")
-        if head then
-            local sx, sy, ok = w2s(head.x, head.y, head.z)
-            if ok then
-                return head
-            end
-        end
-    end
-
     if M.is_npc_target(target) and target.parts then
         for _, part in pairs(target.parts) do
-            local pos = part_world(part)
-            if pos then
-                local sx, sy, ok = w2s(pos.x, pos.y, pos.z)
-                if ok then
-                    local d = math_util.screen_fov_dist_sq(sx, sy, cx, cy)
-                    if d < best_d then
-                        best_d = d
-                        best = pos
+            if env.is_valid(part) then
+                local pos = part_world(part)
+                if pos then
+                    local sx, sy, ok = w2s(pos.x, pos.y, pos.z)
+                    if ok then
+                        local d = math_util.screen_fov_dist_sq(sx, sy, cx, cy)
+                        if d < best_d then
+                            best_d = d
+                            best = pos
+                        end
                     end
                 end
             end

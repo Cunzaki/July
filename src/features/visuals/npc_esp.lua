@@ -4,16 +4,9 @@ local draw_util = July.require("core.draw_util")
 local entity_scan = July.require("game.entity_scan")
 local tier_util = July.require("game.tier_util")
 local npc_types = July.require("game.npc_types")
-local constants = July.require("core.constants")
 local env = July.require("core.env")
 
 local M = {}
-
-local frame_counter = 0
-
-function M.set_frame_counter(n)
-    frame_counter = n
-end
 
 local function get_npc_type(ent)
     return npc_types.display_type(ent)
@@ -53,6 +46,8 @@ function M.render(cam_pos)
     local name_on = settings.bool("havoc_npc_name", false)
     local dist_on = settings.bool("havoc_npc_distance", false)
     local held_on = settings.bool("havoc_npc_held_item", false)
+    local ammo_on = settings.bool("havoc_npc_ammo", false)
+    local reloading_on = settings.bool("havoc_npc_reloading", false)
     local type_on = settings.bool("havoc_npc_npc_type", false)
     local health_bar_on = settings.bool("havoc_npc_health_bar", false)
     local health_text_on = settings.bool("havoc_npc_health_text", false)
@@ -67,13 +62,13 @@ function M.render(cam_pos)
     local name_size = settings.num("havoc_npc_name_size", 13)
     local health_text_size = settings.num("havoc_npc_health_text_size", 8)
     local held_item_size = settings.num("havoc_npc_held_item_size", 10)
+    local ammo_size = settings.num("havoc_npc_ammo_size", 9)
+    local reloading_size = settings.num("havoc_npc_reloading_size", 9)
     local dist_size = settings.num("havoc_npc_distance_size", 10)
     local npc_type_size = settings.num("havoc_npc_npc_type_size", 9)
 
     local needs_full_bounds = box_on and box_style == 2
     local heavy_on = chams_on or skeleton_on or needs_full_bounds
-    local heavy_stride = heavy_on and math.max(1, math.ceil(n / constants.NPC_CHAMS_BUDGET)) or 1
-    local heavy_budget = 0
 
     local esp_opts = {
         box_style = box_style,
@@ -106,24 +101,21 @@ function M.render(cam_pos)
         local bounds = draw_util.get_entity_bounds_fallback(root_pos)
         if not bounds.valid then goto continue_ent end
 
-        if heavy_on and heavy_budget < constants.NPC_CHAMS_BUDGET then
-            if ((frame_counter + i) % heavy_stride) == 0 then
-                local part_pos = collect_part_positions(ent)
-                if next(part_pos) then
-                    if chams_on then
-                        draw_util.draw_entity_chams(part_pos, ent.part_size,
-                            ent_rgb or settings.color("havoc_npc_chams", { 1, 0.2, 0.2, 0.55 }), chams_style)
-                    end
-                    if skeleton_on then
-                        draw_util.draw_entity_skeleton(part_pos,
-                            ent_rgb or settings.color("havoc_npc_skeleton", { 1, 1, 1, 1 }))
-                    end
-                    if needs_full_bounds then
-                        draw_util.draw_entity_3d_box(part_pos, ent.part_size,
-                            ent_rgb or settings.color("havoc_npc_box", { 1, 1, 1, 1 }))
-                    end
+        if heavy_on then
+            local part_pos = collect_part_positions(ent)
+            if next(part_pos) then
+                if chams_on then
+                    draw_util.draw_entity_chams(part_pos, ent.part_size,
+                        ent_rgb or settings.color("havoc_npc_chams", { 1, 0.2, 0.2, 0.55 }), chams_style)
                 end
-                heavy_budget = heavy_budget + 1
+                if skeleton_on then
+                    draw_util.draw_entity_skeleton(part_pos,
+                        ent_rgb or settings.color("havoc_npc_skeleton", { 1, 1, 1, 1 }))
+                end
+                if needs_full_bounds then
+                    draw_util.draw_entity_3d_box(part_pos, ent.part_size,
+                        ent_rgb or settings.color("havoc_npc_box", { 1, 1, 1, 1 }))
+                end
             end
         end
 
@@ -154,6 +146,24 @@ function M.render(cam_pos)
         esp_opts.held_item_slot = held_on
         esp_opts.held_item_color = ent_rgb or held_color
         esp_opts.npc_type = npc_type
+
+        local flags = {}
+        if ammo_on and ent._ammo_current ~= nil then
+            flags[#flags + 1] = {
+                text = string.format("Ammo: %s", tostring(ent._ammo_current)),
+                color = ent_rgb or settings.color("havoc_npc_ammo", { 0.55, 0.85, 1, 1 }),
+            }
+        end
+        if reloading_on and ent._reloading then
+            flags[#flags + 1] = {
+                text = "RELOADING",
+                color = ent_rgb or settings.color("havoc_npc_reloading", { 1, 0.45, 0.2, 1 }),
+            }
+        end
+        if #flags > 0 then
+            esp_opts.flags = flags
+            esp_opts.flag_size = math.max(ammo_on and ammo_size or 0, reloading_on and reloading_size or 0, 9)
+        end
 
         draw_util.draw_esp(bounds, name_str, dist, esp_opts)
 
