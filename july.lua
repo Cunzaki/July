@@ -1,7 +1,7 @@
 --[[
     July - Havoc for Project Vector
     https://github.com/Cunzaki/July
-    Built: 2026-07-08T10:36:50.622Z
+    Built: 2026-07-08T10:59:36.159Z
 ]]
 
 July = {
@@ -53,7 +53,7 @@ M.LOOT_PRUNE_BATCH = 24
 M.LOOT_COMPACT_INTERVAL = 8.0
 M.LOOT_MAX_PARTS = 6
 M.DROP_SCAN_DEPTH = 4
-M.DROP_SCAN_INTERVAL = 1.5
+M.DROP_SCAN_INTERVAL = 3.5
 M.TRAP_LIVE_BATCH = 16
 
 M.TRAP_SCAN_DEPTH = 8
@@ -67,7 +67,7 @@ M.LOOT_MARKER_GAP = 8
 
 M.ESP_HIDE_SQ = 9
 M.ESP_RENDER_BUDGET = 100
-M.ESP_POS_CACHE_MS = 120
+M.ESP_POS_CACHE_MS = 200
 M.ESP_POS_CACHE_COMBAT_MS = 50
 
 M.SKELETON_OUTLINE_COLOR = { 0, 0, 0, 0.78 }
@@ -1725,6 +1725,86 @@ return M
 
 end)()
 
+-- ── core/esp_util.lua ──
+July._mods["core.esp_util"] = (function()
+local M = {}
+
+local BOX_EDGES = {
+    { 1, 2 }, { 1, 3 }, { 2, 4 }, { 3, 4 },
+    { 5, 6 }, { 5, 7 }, { 6, 8 }, { 7, 8 },
+    { 1, 5 }, { 2, 6 }, { 3, 7 }, { 4, 8 },
+}
+
+local BOX_SIGNS = {
+    { -1, -1, -1 }, { 1, -1, -1 }, { -1, 1, -1 }, { 1, 1, -1 },
+    { -1, -1, 1 }, { 1, -1, 1 }, { -1, 1, 1 }, { 1, 1, 1 },
+}
+
+function M.w2s(x, y, z)
+    if utility and utility.WorldToScreen then
+        return utility.WorldToScreen(x, y, z)
+    end
+    if draw and draw.world_to_screen then
+        return draw.world_to_screen(x, y, z)
+    end
+    return 0, 0, false
+end
+
+local function draw_line(x1, y1, x2, y2, col, thick)
+    if draw and draw.Line then
+        draw.Line(x1, y1, x2, y2, col, thick or 1)
+    elseif draw and draw.line then
+        draw.line(x1, y1, x2, y2, col, thick or 1)
+    end
+end
+
+function M.draw_oriented_box(box, col, thick)
+    if not box then return end
+    thick = thick or 1
+
+    local screen = {}
+    for i = 1, 8 do
+        local sx, sy, sz = BOX_SIGNS[i][1], BOX_SIGNS[i][2], BOX_SIGNS[i][3]
+        local lx, ly, lz = sx * box.hx, sy * box.hy, sz * box.hz
+        local wx = box.x + box.rx * lx + box.ux * ly - box.lx * lz
+        local wy = box.y + box.ry * lx + box.uy * ly - box.ly * lz
+        local wz = box.z + box.rz * lx + box.uz * ly - box.lz * lz
+        local px, py, vis = M.w2s(wx, wy, wz)
+        if vis then
+            screen[i] = { x = px, y = py }
+        end
+    end
+
+    for i = 1, #BOX_EDGES do
+        local edge = BOX_EDGES[i]
+        local a = screen[edge[1]]
+        local b = screen[edge[2]]
+        if a and b then
+            draw_line(a.x, a.y, b.x, b.y, col, thick)
+        end
+    end
+end
+
+function M.draw_entry_boxes(entry, col, thick)
+    if not entry or not entry.inst then return end
+    if entry.box then
+        M.draw_oriented_box(entry.box, col, thick)
+        return
+    end
+
+    local esp_scan = July.require("game.esp_scan")
+    local main = entry.main_part or esp_scan.find_main_part(entry.inst)
+    local box = esp_scan.read_part_box(main)
+    if box then
+        entry.box = box
+        M.draw_oriented_box(box, col, thick)
+    end
+end
+
+return M
+
+end)()
+
 -- ── game/item_tiers.lua ──
 July._mods["game.item_tiers"] = (function()
 -- Auto-generated from Havoc dump. Run: node scripts/extract-extra.mjs
@@ -2487,6 +2567,26 @@ function M.is_enabled(category)
     if not category or not category.key then return false end
     local settings = July.require("core.settings")
     return settings.bool(category.key, true)
+end
+
+function M.build_enabled_set()
+    local set = {}
+    for i = 1, #M.LOOT_TYPES do
+        local cat = M.LOOT_TYPES[i]
+        if M.is_enabled(cat) then
+            set[cat] = true
+        end
+    end
+    for i = 1, #M.DROP_TYPES do
+        local cat = M.DROP_TYPES[i]
+        if M.is_enabled(cat) then
+            set[cat] = true
+        end
+    end
+    if M.is_enabled(M.BODY_BAG_TYPE) then
+        set[M.BODY_BAG_TYPE] = true
+    end
+    return set
 end
 
 function M.get_color(category)
@@ -4722,6 +4822,178 @@ return M
 
 end)()
 
+-- ── game/esp_scan.lua ──
+July._mods["game.esp_scan"] = (function()
+--[[ Shared ESP scan helpers — part lookup + oriented 3D box data. ]]
+
+local env = July.require("core.env")
+
+local M = {}
+
+local PART_CLASSES = {
+    Part = true,
+    MeshPart = true,
+    UnionOperation = true,
+}
+
+function M.is_part(inst)
+    if not inst then return false end
+    return PART_CLASSES[inst.ClassName] == true
+end
+
+function M.find_main_part(model)
+    if not env.is_valid(model) then return nil end
+
+    local main = env.safe_call(function()
+        return model:FindFirstChild("Main")
+    end)
+    if main and M.is_part(main) then return main end
+
+    local hrp = env.safe_call(function()
+        return model:FindFirstChild("HumanoidRootPart")
+    end)
+    if hrp and M.is_part(hrp) then return hrp end
+
+    local children = env.safe_call(function() return model:GetChildren() end) or {}
+    for i = 1, #children do
+        if M.is_part(children[i]) then return children[i] end
+    end
+
+    if M.is_part(model) then return model end
+    return nil
+end
+
+local function vec3(v, axis)
+    if not v then return 0 end
+    if axis == "x" then return v.x or v.X or 0 end
+    if axis == "y" then return v.y or v.Y or 0 end
+    return v.z or v.Z or 0
+end
+
+function M.read_part_box(part)
+    if not env.is_valid(part) or not M.is_part(part) then return nil end
+
+    local pos, size, rv, uv, lv
+    pcall(function()
+        pos = part.Position
+        size = part.Size
+        rv = part.RightVector
+        uv = part.UpVector
+        lv = part.LookVector
+    end)
+
+    if not pos or not size then return nil end
+
+    return {
+        x = vec3(pos, "x"),
+        y = vec3(pos, "y"),
+        z = vec3(pos, "z"),
+        hx = vec3(size, "x") * 0.5,
+        hy = vec3(size, "y") * 0.5,
+        hz = vec3(size, "z") * 0.5,
+        rx = rv and vec3(rv, "x") or 1,
+        ry = rv and vec3(rv, "y") or 0,
+        rz = rv and vec3(rv, "z") or 0,
+        ux = uv and vec3(uv, "x") or 0,
+        uy = uv and vec3(uv, "y") or 1,
+        uz = uv and vec3(uv, "z") or 0,
+        lx = lv and vec3(lv, "x") or 0,
+        ly = lv and vec3(lv, "y") or 0,
+        lz = lv and vec3(lv, "z") or 1,
+    }
+end
+
+function M.label_position(entry)
+    if not entry or not env.is_valid(entry.inst) then return nil end
+    local main = M.find_main_part(entry.inst)
+    if main then
+        local box = M.read_part_box(main)
+        if box then
+            return box.x, box.y + box.hy + 0.25, box.z
+        end
+        local pos = main.Position
+        if pos then
+            return vec3(pos, "x"), vec3(pos, "y"), vec3(pos, "z")
+        end
+    end
+    return nil
+end
+
+function M.hydrate_entry(entry)
+    if not entry or not env.is_valid(entry.inst) then return entry end
+
+    local main = M.find_main_part(entry.inst)
+    entry.main_part = main
+
+    if main then
+        local box = M.read_part_box(main)
+        entry.box = box
+        if box then
+            entry.lx = box.x
+            entry.ly = box.y + box.hy + 0.25
+            entry.lz = box.z
+        else
+            local pos = main.Position
+            if pos then
+                entry.lx = vec3(pos, "x")
+                entry.ly = vec3(pos, "y")
+                entry.lz = vec3(pos, "z")
+            end
+        end
+    end
+
+    return entry
+end
+
+function M.refresh_entry_position(entry)
+    if not entry or not env.is_valid(entry.inst) then return false end
+
+    if entry.main_part and env.is_valid(entry.main_part) then
+        local box = M.read_part_box(entry.main_part)
+        if box then
+            entry.box = box
+            entry.lx = box.x
+            entry.ly = box.y + box.hy + 0.25
+            entry.lz = box.z
+            return true
+        end
+    end
+
+    M.hydrate_entry(entry)
+
+    if not entry.lx and entry.root and env.is_valid(entry.root) then
+        local box = M.read_part_box(entry.root)
+        if box then
+            entry.box = box
+            entry.main_part = entry.root
+            entry.lx = box.x
+            entry.ly = box.y + box.hy + 0.25
+            entry.lz = box.z
+            return true
+        end
+        local ok, pos = pcall(function() return entry.root.Position end)
+        if ok and pos then
+            entry.lx = pos.X or pos.x
+            entry.ly = (pos.Y or pos.y) + 0.25
+            entry.lz = pos.Z or pos.z
+            return true
+        end
+    end
+
+    return entry.lx ~= nil
+end
+
+function M.entry_coords(entry)
+    if entry and entry.lx and entry.ly and entry.lz then
+        return entry.lx, entry.ly, entry.lz
+    end
+    return M.label_position(entry)
+end
+
+return M
+
+end)()
+
 -- ── game/loot_scan.lua ──
 July._mods["game.loot_scan"] = (function()
 local constants = July.require("core.constants")
@@ -4743,7 +5015,8 @@ local loot_live_cursor = 1
 local last_compact = -9999
 local buildings_folder = nil
 local objects_folder = nil
-local MAX_PARTS = constants.LOOT_MAX_PARTS or 6
+local grid_weld_lookup = nil
+local grid_weld_lookup_stamp = -9999
 
 local function vec3(pos)
     if not pos then return nil end
@@ -4752,39 +5025,6 @@ local function vec3(pos)
         Y = pos.Y or pos.y or 0,
         Z = pos.Z or pos.z or 0,
     }
-end
-
-local function part_count(part_pos)
-    local n = 0
-    for _ in pairs(part_pos) do
-        n = n + 1
-    end
-    return n
-end
-
-local function collect_model_parts(model, part_pos, part_size, depth)
-    if depth > 2 or part_count(part_pos) >= MAX_PARTS then return end
-
-    local ok, children = pcall(function() return model:GetChildren() end)
-    if not ok or not children then return end
-
-    for i = 1, #children do
-        scan_yield.yield()
-        if part_count(part_pos) >= MAX_PARTS then return end
-
-        local child = children[i]
-        local cls = child.ClassName
-        if cls == "Part" or cls == "MeshPart" then
-            local ok_pos, pos = pcall(function() return child.Position end)
-            local ok_size, size = pcall(function() return child.Size end)
-            if ok_pos and pos then
-                part_pos[child] = vec3(pos)
-                part_size[child] = ok_size and size or nil
-            end
-        elseif cls == "Model" or cls == "Folder" then
-            collect_model_parts(child, part_pos, part_size, depth + 1)
-        end
-    end
 end
 
 local function get_loot_info(model)
@@ -4818,26 +5058,52 @@ local function get_door_info(model)
     return is_open, is_locked
 end
 
+local function hydrate_loot_entry(entry)
+    if not entry or not entry.model then return end
+    entry.inst = entry.model
+
+    local esp_scan = July.require("game.esp_scan")
+    esp_scan.hydrate_entry(entry)
+
+    if not entry.lx and entry.root and env.is_valid(entry.root) then
+        local box = esp_scan.read_part_box(entry.root)
+        if box then
+            entry.box = box
+            entry.main_part = entry.root
+            entry.lx = box.x
+            entry.ly = box.y + box.hy + 0.25
+            entry.lz = box.z
+        else
+            local ok, pos = pcall(function() return entry.root.Position end)
+            if ok and pos then
+                entry.lx = pos.X or pos.x
+                entry.ly = (pos.Y or pos.y) + 0.25
+                entry.lz = pos.Z or pos.z
+            end
+        end
+    end
+end
+
 local function get_or_create_loot(model, root, category, is_open_inst, is_locked_inst)
     local entry = loot_by_model[model]
     if entry then
         if env.is_valid(entry.model) and env.is_valid(entry.root) then
             entry.category = category or entry.category
+            if not entry.lx then
+                hydrate_loot_entry(entry)
+            end
             return entry
         end
         loot_by_model[model] = nil
     end
 
     local ok_pos, pos = pcall(function() return root.Position end)
-    local part_pos, part_size = {}, {}
-    collect_model_parts(model, part_pos, part_size, 0)
 
     entry = {
+        inst = model,
         model = model,
         root = root,
         pos = ok_pos and vec3(pos) or nil,
-        part_pos = part_pos,
-        part_size = part_size,
         is_open_inst = is_open_inst,
         is_locked_inst = is_locked_inst,
         is_open = nil,
@@ -4845,6 +5111,7 @@ local function get_or_create_loot(model, root, category, is_open_inst, is_locked
         category = category,
     }
     loot_by_model[model] = entry
+    hydrate_loot_entry(entry)
     return entry
 end
 
@@ -4985,27 +5252,6 @@ end
 local function resolve_grid_item_type(folder)
     if not folder then return nil end
     return string_value(folder, "itemType") or string_value(folder, "category")
-end
-
-local function find_grid_folder_for_weld(weld_model)
-    local grid = get_grid_item_folder()
-    if not grid or not weld_model then return nil end
-
-    local ok, children = pcall(function() return grid:GetChildren() end)
-    if not ok or not children then return nil end
-
-    for i = 1, #children do
-        scan_yield.yield()
-        local folder = children[i]
-        if folder.ClassName == "Folder" then
-            local weld = object_value_target(folder, "currentWeldModel")
-            if weld == weld_model then
-                return folder
-            end
-        end
-    end
-
-    return nil
 end
 
 local function resolve_drop_name_from_sources(inst, grid_folder)
@@ -5179,6 +5425,37 @@ local function get_grid_item_folder()
     return storage:FindFirstChild("GridItemFolder")
 end
 
+local function rebuild_grid_weld_lookup()
+    grid_weld_lookup = {}
+    local grid = get_grid_item_folder()
+    if not grid or not env.is_valid(grid) then return end
+
+    local ok, children = pcall(function() return grid:GetChildren() end)
+    if not ok or not children then return end
+
+    for i = 1, #children do
+        local folder = children[i]
+        if folder.ClassName == "Folder" then
+            local weld = object_value_target(folder, "currentWeldModel")
+            if weld then
+                grid_weld_lookup[weld] = folder
+            end
+        end
+    end
+    grid_weld_lookup_stamp = os.clock()
+end
+
+local function find_grid_folder_for_weld(weld_model)
+    if not weld_model then return nil end
+
+    local now = os.clock()
+    if not grid_weld_lookup or (now - grid_weld_lookup_stamp) > 2.0 then
+        rebuild_grid_weld_lookup()
+    end
+
+    return grid_weld_lookup and grid_weld_lookup[weld_model]
+end
+
 local function get_buildings_folder()
     if buildings_folder and not env.is_valid(buildings_folder) then
         buildings_folder = nil
@@ -5238,6 +5515,9 @@ local function get_or_create_drop(model, root, category, display_name)
             entry.category = category or entry.category
             entry.display_name = display_name
             entry.tier_color = tier_util.get_esp_color(display_name)
+            if not entry.lx then
+                hydrate_loot_entry(entry)
+            end
             return entry
         end
         loot_by_model[model] = nil
@@ -5246,11 +5526,10 @@ local function get_or_create_drop(model, root, category, display_name)
     local ok_pos, pos = pcall(function() return root.Position end)
 
     entry = {
+        inst = model,
         model = model,
         root = root,
         pos = ok_pos and vec3(pos) or nil,
-        part_pos = nil,
-        part_size = nil,
         is_open_inst = nil,
         is_locked_inst = nil,
         is_open = nil,
@@ -5261,6 +5540,7 @@ local function get_or_create_drop(model, root, category, display_name)
         is_drop = true,
     }
     loot_by_model[model] = entry
+    hydrate_loot_entry(entry)
     return entry
 end
 
@@ -5617,6 +5897,8 @@ function M.refresh_drops(force)
     if not force and (now - drop_cache_stamp) < constants.DROP_SCAN_INTERVAL then return end
     drop_cache_stamp = now
 
+    rebuild_grid_weld_lookup()
+
     local out = {}
     local seen = {}
     collect_objects_drops(out, seen)
@@ -5652,31 +5934,6 @@ end
 local function combat_active()
     return settings.bool("havoc_aimbot_enabled", false)
         and settings.enabled("havoc_aimbot_keybind")
-end
-
-local function refresh_entry_pos(loot)
-    if loot.is_drop then
-        local root = loot.root
-        if loot.model and env.is_valid(loot.model) then
-            if is_grid_item_folder(loot.model) then
-                local weld = object_value_target(loot.model, "currentWeldModel")
-                if weld and env.is_valid(weld) then
-                    root = resolve_drop_root(weld) or root
-                end
-            end
-            root = resolve_drop_root(loot.model) or root
-        end
-        if root and env.is_valid(root) then
-            loot.root = root
-        end
-    end
-
-    if loot.root and env.is_valid(loot.root) then
-        local ok_pos, pos = pcall(function() return loot.root.Position end)
-        if ok_pos and pos then
-            loot.pos = vec3(pos)
-        end
-    end
 end
 
 function M.refresh_live()
@@ -5724,8 +5981,9 @@ function M.refresh_live()
                     end
                 end
             end
-            if refresh_pos then
-                refresh_entry_pos(loot)
+            if refresh_pos and loot.is_drop then
+                local esp_scan = July.require("game.esp_scan")
+                esp_scan.refresh_entry_position(loot)
             end
         end
 
@@ -5741,6 +5999,8 @@ local drops_co = nil
 function M.invalidate()
     buildings_folder = nil
     objects_folder = nil
+    grid_weld_lookup = nil
+    grid_weld_lookup_stamp = -9999
     loot_by_model = {}
     loot_cache = {}
     loot_cache_stamp = -9998
@@ -5768,11 +6028,12 @@ end
 function M.tick_async(budget_ms)
     local scan_async = July.require("core.scan_async")
     budget_ms = budget_ms or constants.SCAN_BUDGET_MS or 4
+    local half = math.max(1, math.floor(budget_ms * 0.5))
 
-    if static_co and scan_async.tick(static_co, budget_ms) then
+    if static_co and scan_async.tick(static_co, half) then
         static_co = nil
     end
-    if drops_co and scan_async.tick(drops_co, budget_ms) then
+    if drops_co and scan_async.tick(drops_co, half) then
         drops_co = nil
     end
 end
@@ -6195,9 +6456,16 @@ local function combat_active()
         and settings.enabled("havoc_aimbot_keybind")
 end
 
-local function any_world_esp()
+local function any_loot_esp()
     return settings.enabled("havoc_loot_enabled")
-        or settings.enabled("havoc_trap_enabled")
+end
+
+local function any_trap_esp()
+    return settings.enabled("havoc_trap_enabled")
+end
+
+local function any_world_esp()
+    return any_loot_esp() or any_trap_esp()
 end
 
 local function any_npc_esp()
@@ -6220,7 +6488,7 @@ function M.tick(frame_counter)
         end
     end
 
-    if any_world_esp() then
+    if any_loot_esp() then
         if t - last.loot >= constants.LOOT_SCAN_INTERVAL then
             last.loot = t
             loot_scan.queue_refresh()
@@ -6236,7 +6504,7 @@ function M.tick(frame_counter)
         loot_scan.tick_async(scan_budget)
     end
 
-    if settings.enabled("havoc_trap_enabled") then
+    if any_trap_esp() then
         if t - last.trap >= constants.TRAP_SCAN_INTERVAL then
             last.trap = t
             trap_scan.queue_refresh()
@@ -6251,10 +6519,10 @@ function M.tick(frame_counter)
         if any_npc_esp() then
             entity_scan.refresh_live()
         end
-        if any_world_esp() then
+        if any_loot_esp() then
             loot_scan.refresh_live()
         end
-        if settings.enabled("havoc_trap_enabled") then
+        if any_trap_esp() then
             trap_scan.refresh_live()
         end
     end
@@ -8035,18 +8303,11 @@ local draw_util = July.require("core.draw_util")
 local loot_scan = July.require("game.loot_scan")
 local loot_catalog = July.require("game.loot_catalog")
 local tier_util = July.require("game.tier_util")
-local esp_render = July.require("core.esp_render")
+local esp_scan = July.require("game.esp_scan")
+local esp_util = July.require("core.esp_util")
 local env = July.require("core.env")
 
 local M = {}
-
-local candidates = {}
-
-local function clear_candidates()
-    for i = 1, #candidates do
-        candidates[i] = nil
-    end
-end
 
 local function loot_passes_filter(filter_idx, is_open_val, is_locked_val, is_drop)
     if is_drop then
@@ -8062,52 +8323,9 @@ local function loot_passes_filter(filter_idx, is_open_val, is_locked_val, is_dro
     return true
 end
 
-local function dist_sq(a, b)
-    local dx = (a.X or a.x or 0) - (b.X or b.x or 0)
-    local dy = (a.Y or a.y or 0) - (b.Y or b.y or 0)
-    local dz = (a.Z or a.z or 0) - (b.Z or b.z or 0)
-    return dx * dx + dy * dy + dz * dz
-end
-
-local function draw_loot_box(loot, color, box_style)
-    if box_style == 2 then
-        if loot.root and env.is_valid(loot.root) then
-            draw_util.draw_root_3d_box(loot.root, color)
-        elseif loot.pos then
-            local bounds = draw_util.get_entity_bounds_fallback(loot.pos)
-            if bounds.valid then
-                draw.Rect(bounds.x, bounds.y, bounds.w, bounds.h, color)
-            end
-        end
-        return
-    end
-
-    if loot.root and env.is_valid(loot.root) then
-        local ok_pos, pos = pcall(function() return loot.root.Position end)
-        local ok_size, size = pcall(function() return loot.root.Size end)
-        if ok_pos and pos and ok_size and size then
-            local bounds = draw_util.get_entity_bounds_from_parts({ root = pos }, { root = size })
-            if bounds.valid then
-                if box_style == 0 then
-                    draw.CornerBox(bounds.x, bounds.y, bounds.w, bounds.h, color)
-                else
-                    draw.Rect(bounds.x, bounds.y, bounds.w, bounds.h, color)
-                end
-                return
-            end
-        end
-    end
-
-    if loot.pos then
-        local bounds = draw_util.get_entity_bounds_fallback(loot.pos)
-        if bounds.valid then
-            if box_style == 0 then
-                draw.CornerBox(bounds.x, bounds.y, bounds.w, bounds.h, color)
-            else
-                draw.Rect(bounds.x, bounds.y, bounds.w, bounds.h, color)
-            end
-        end
-    end
+local function cam_xyz(cam_pos)
+    if not cam_pos then return 0, 0, 0 end
+    return cam_pos.X or cam_pos.x or 0, cam_pos.Y or cam_pos.y or 0, cam_pos.Z or cam_pos.z or 0
 end
 
 function M.render(cam_pos)
@@ -8124,69 +8342,59 @@ function M.render(cam_pos)
     local show_marker = settings.bool("havoc_loot_marker", false)
     local box_on = settings.bool("havoc_loot_box", false)
     local box_style = settings.num("havoc_loot_box_style", 2)
+    local draw_3d = box_on and box_style == 2
     local max_dist = settings.num("havoc_loot_max_distance", 500)
     local filter_idx = settings.num("havoc_loot_filter", 0)
     local text_size = settings.num("havoc_loot_text_size", 13)
     local loot_rgb = settings.bool("havoc_loot_rainbow", false) and color_util.rainbow_color(0.3) or nil
     local max_dist_sq = max_dist * max_dist
-    local budget = constants.ESP_RENDER_BUDGET or 100
-    local count = 0
-
-    clear_candidates()
+    local hide_sq = constants.ESP_HIDE_SQ or 9
+    local cx, cy, cz = cam_xyz(cam_pos)
 
     for i = 1, n do
-        local loot = loot_cache[i]
-        if loot.pos and loot.category and env.is_valid(loot.model) and loot_catalog.is_enabled(loot.category) then
-            if loot_passes_filter(filter_idx, loot.is_open, loot.is_locked, loot.is_drop) then
-                local dsq = dist_sq(cam_pos, loot.pos)
-                if dsq <= max_dist_sq and (loot.is_drop or dsq > constants.ESP_HIDE_SQ) then
-                    count = count + 1
-                    candidates[count] = {
-                        loot = loot,
-                        dist_sq = dsq,
-                    }
-                end
-            end
+        local entry = loot_cache[i]
+        local category = entry and entry.category
+        if not entry or not category or not loot_catalog.is_enabled(category) then
+            goto continue
         end
-    end
-
-    if count == 0 then return end
-
-    local draw_list = esp_render.pick_closest(candidates, budget)
-
-    for i = 1, #draw_list do
-        local entry = draw_list[i]
-        local loot = entry.loot
-        local dist = math.sqrt(entry.dist_sq)
-        local px = loot.pos.X or loot.pos.x
-        local py = loot.pos.Y or loot.pos.y
-        local pz = loot.pos.Z or loot.pos.z
-
-        local sx, sy, sok = esp_render.w2s(px, py, pz)
-        if not sok or not esp_render.on_screen(sx, sy) then
-            goto continue_draw
+        if not env.is_valid(entry.model) then goto continue end
+        if not loot_passes_filter(filter_idx, entry.is_open, entry.is_locked, entry.is_drop) then
+            goto continue
         end
+
+        local lx, ly, lz = esp_scan.entry_coords(entry)
+        if not lx then goto continue end
+
+        local dx, dy, dz = lx - cx, ly - cy, lz - cz
+        local dist_sq = dx * dx + dy * dy + dz * dz
+        if dist_sq > max_dist_sq then goto continue end
+        if not entry.is_drop and dist_sq <= hide_sq then goto continue end
+
+        local dist = math.sqrt(dist_sq)
 
         local base_color
-        if loot.is_drop and loot.category then
-            base_color = loot_rgb or loot_catalog.get_color(loot.category) or loot.tier_color
+        if entry.is_drop then
+            base_color = loot_rgb or loot_catalog.get_color(category) or entry.tier_color
         else
-            base_color = loot.tier_color or loot_rgb or loot_catalog.get_color(loot.category)
+            base_color = entry.tier_color or loot_rgb or loot_catalog.get_color(category)
         end
         local box_color = loot_rgb or settings.color("havoc_loot_box", base_color)
 
-        if box_on and dist <= math.min(max_dist, 250) then
-            draw_loot_box(loot, box_color, box_style)
+        if draw_3d then
+            esp_util.draw_entry_boxes(entry, box_color, 1)
         end
 
-        local label = loot.category.display
-        if loot.display_name then
-            label = tier_util.get_item_label(loot.display_name)
+        local sx, sy, vis = esp_util.w2s(lx, ly, lz)
+        if not vis then goto continue end
+
+        local label = category.display
+        if entry.display_name then
+            label = tier_util.get_item_label(entry.display_name)
         end
-        draw_util.draw_loot_label(sx, sy, label, loot.is_locked, dist, show_dist, base_color,
+        draw_util.draw_loot_label(sx, sy, label, entry.is_locked, dist, show_dist, base_color,
             dist_pos, show_marker, text_size)
 
-        ::continue_draw::
+        ::continue::
     end
 end
 

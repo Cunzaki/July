@@ -17,7 +17,8 @@ local loot_live_cursor = 1
 local last_compact = -9999
 local buildings_folder = nil
 local objects_folder = nil
-local MAX_PARTS = constants.LOOT_MAX_PARTS or 6
+local grid_weld_lookup = nil
+local grid_weld_lookup_stamp = -9999
 
 local function vec3(pos)
     if not pos then return nil end
@@ -26,39 +27,6 @@ local function vec3(pos)
         Y = pos.Y or pos.y or 0,
         Z = pos.Z or pos.z or 0,
     }
-end
-
-local function part_count(part_pos)
-    local n = 0
-    for _ in pairs(part_pos) do
-        n = n + 1
-    end
-    return n
-end
-
-local function collect_model_parts(model, part_pos, part_size, depth)
-    if depth > 2 or part_count(part_pos) >= MAX_PARTS then return end
-
-    local ok, children = pcall(function() return model:GetChildren() end)
-    if not ok or not children then return end
-
-    for i = 1, #children do
-        scan_yield.yield()
-        if part_count(part_pos) >= MAX_PARTS then return end
-
-        local child = children[i]
-        local cls = child.ClassName
-        if cls == "Part" or cls == "MeshPart" then
-            local ok_pos, pos = pcall(function() return child.Position end)
-            local ok_size, size = pcall(function() return child.Size end)
-            if ok_pos and pos then
-                part_pos[child] = vec3(pos)
-                part_size[child] = ok_size and size or nil
-            end
-        elseif cls == "Model" or cls == "Folder" then
-            collect_model_parts(child, part_pos, part_size, depth + 1)
-        end
-    end
 end
 
 local function get_loot_info(model)
@@ -92,26 +60,52 @@ local function get_door_info(model)
     return is_open, is_locked
 end
 
+local function hydrate_loot_entry(entry)
+    if not entry or not entry.model then return end
+    entry.inst = entry.model
+
+    local esp_scan = July.require("game.esp_scan")
+    esp_scan.hydrate_entry(entry)
+
+    if not entry.lx and entry.root and env.is_valid(entry.root) then
+        local box = esp_scan.read_part_box(entry.root)
+        if box then
+            entry.box = box
+            entry.main_part = entry.root
+            entry.lx = box.x
+            entry.ly = box.y + box.hy + 0.25
+            entry.lz = box.z
+        else
+            local ok, pos = pcall(function() return entry.root.Position end)
+            if ok and pos then
+                entry.lx = pos.X or pos.x
+                entry.ly = (pos.Y or pos.y) + 0.25
+                entry.lz = pos.Z or pos.z
+            end
+        end
+    end
+end
+
 local function get_or_create_loot(model, root, category, is_open_inst, is_locked_inst)
     local entry = loot_by_model[model]
     if entry then
         if env.is_valid(entry.model) and env.is_valid(entry.root) then
             entry.category = category or entry.category
+            if not entry.lx then
+                hydrate_loot_entry(entry)
+            end
             return entry
         end
         loot_by_model[model] = nil
     end
 
     local ok_pos, pos = pcall(function() return root.Position end)
-    local part_pos, part_size = {}, {}
-    collect_model_parts(model, part_pos, part_size, 0)
 
     entry = {
+        inst = model,
         model = model,
         root = root,
         pos = ok_pos and vec3(pos) or nil,
-        part_pos = part_pos,
-        part_size = part_size,
         is_open_inst = is_open_inst,
         is_locked_inst = is_locked_inst,
         is_open = nil,
@@ -119,6 +113,7 @@ local function get_or_create_loot(model, root, category, is_open_inst, is_locked
         category = category,
     }
     loot_by_model[model] = entry
+    hydrate_loot_entry(entry)
     return entry
 end
 
@@ -259,27 +254,6 @@ end
 local function resolve_grid_item_type(folder)
     if not folder then return nil end
     return string_value(folder, "itemType") or string_value(folder, "category")
-end
-
-local function find_grid_folder_for_weld(weld_model)
-    local grid = get_grid_item_folder()
-    if not grid or not weld_model then return nil end
-
-    local ok, children = pcall(function() return grid:GetChildren() end)
-    if not ok or not children then return nil end
-
-    for i = 1, #children do
-        scan_yield.yield()
-        local folder = children[i]
-        if folder.ClassName == "Folder" then
-            local weld = object_value_target(folder, "currentWeldModel")
-            if weld == weld_model then
-                return folder
-            end
-        end
-    end
-
-    return nil
 end
 
 local function resolve_drop_name_from_sources(inst, grid_folder)
@@ -453,6 +427,37 @@ local function get_grid_item_folder()
     return storage:FindFirstChild("GridItemFolder")
 end
 
+local function rebuild_grid_weld_lookup()
+    grid_weld_lookup = {}
+    local grid = get_grid_item_folder()
+    if not grid or not env.is_valid(grid) then return end
+
+    local ok, children = pcall(function() return grid:GetChildren() end)
+    if not ok or not children then return end
+
+    for i = 1, #children do
+        local folder = children[i]
+        if folder.ClassName == "Folder" then
+            local weld = object_value_target(folder, "currentWeldModel")
+            if weld then
+                grid_weld_lookup[weld] = folder
+            end
+        end
+    end
+    grid_weld_lookup_stamp = os.clock()
+end
+
+local function find_grid_folder_for_weld(weld_model)
+    if not weld_model then return nil end
+
+    local now = os.clock()
+    if not grid_weld_lookup or (now - grid_weld_lookup_stamp) > 2.0 then
+        rebuild_grid_weld_lookup()
+    end
+
+    return grid_weld_lookup and grid_weld_lookup[weld_model]
+end
+
 local function get_buildings_folder()
     if buildings_folder and not env.is_valid(buildings_folder) then
         buildings_folder = nil
@@ -512,6 +517,9 @@ local function get_or_create_drop(model, root, category, display_name)
             entry.category = category or entry.category
             entry.display_name = display_name
             entry.tier_color = tier_util.get_esp_color(display_name)
+            if not entry.lx then
+                hydrate_loot_entry(entry)
+            end
             return entry
         end
         loot_by_model[model] = nil
@@ -520,11 +528,10 @@ local function get_or_create_drop(model, root, category, display_name)
     local ok_pos, pos = pcall(function() return root.Position end)
 
     entry = {
+        inst = model,
         model = model,
         root = root,
         pos = ok_pos and vec3(pos) or nil,
-        part_pos = nil,
-        part_size = nil,
         is_open_inst = nil,
         is_locked_inst = nil,
         is_open = nil,
@@ -535,6 +542,7 @@ local function get_or_create_drop(model, root, category, display_name)
         is_drop = true,
     }
     loot_by_model[model] = entry
+    hydrate_loot_entry(entry)
     return entry
 end
 
@@ -891,6 +899,8 @@ function M.refresh_drops(force)
     if not force and (now - drop_cache_stamp) < constants.DROP_SCAN_INTERVAL then return end
     drop_cache_stamp = now
 
+    rebuild_grid_weld_lookup()
+
     local out = {}
     local seen = {}
     collect_objects_drops(out, seen)
@@ -926,31 +936,6 @@ end
 local function combat_active()
     return settings.bool("havoc_aimbot_enabled", false)
         and settings.enabled("havoc_aimbot_keybind")
-end
-
-local function refresh_entry_pos(loot)
-    if loot.is_drop then
-        local root = loot.root
-        if loot.model and env.is_valid(loot.model) then
-            if is_grid_item_folder(loot.model) then
-                local weld = object_value_target(loot.model, "currentWeldModel")
-                if weld and env.is_valid(weld) then
-                    root = resolve_drop_root(weld) or root
-                end
-            end
-            root = resolve_drop_root(loot.model) or root
-        end
-        if root and env.is_valid(root) then
-            loot.root = root
-        end
-    end
-
-    if loot.root and env.is_valid(loot.root) then
-        local ok_pos, pos = pcall(function() return loot.root.Position end)
-        if ok_pos and pos then
-            loot.pos = vec3(pos)
-        end
-    end
 end
 
 function M.refresh_live()
@@ -998,8 +983,9 @@ function M.refresh_live()
                     end
                 end
             end
-            if refresh_pos then
-                refresh_entry_pos(loot)
+            if refresh_pos and loot.is_drop then
+                local esp_scan = July.require("game.esp_scan")
+                esp_scan.refresh_entry_position(loot)
             end
         end
 
@@ -1015,6 +1001,8 @@ local drops_co = nil
 function M.invalidate()
     buildings_folder = nil
     objects_folder = nil
+    grid_weld_lookup = nil
+    grid_weld_lookup_stamp = -9999
     loot_by_model = {}
     loot_cache = {}
     loot_cache_stamp = -9998
@@ -1042,11 +1030,12 @@ end
 function M.tick_async(budget_ms)
     local scan_async = July.require("core.scan_async")
     budget_ms = budget_ms or constants.SCAN_BUDGET_MS or 4
+    local half = math.max(1, math.floor(budget_ms * 0.5))
 
-    if static_co and scan_async.tick(static_co, budget_ms) then
+    if static_co and scan_async.tick(static_co, half) then
         static_co = nil
     end
-    if drops_co and scan_async.tick(drops_co, budget_ms) then
+    if drops_co and scan_async.tick(drops_co, half) then
         drops_co = nil
     end
 end

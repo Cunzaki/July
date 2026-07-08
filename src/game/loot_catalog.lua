@@ -140,6 +140,26 @@ function M.is_enabled(category)
     return settings.bool(category.key, true)
 end
 
+function M.build_enabled_set()
+    local set = {}
+    for i = 1, #M.LOOT_TYPES do
+        local cat = M.LOOT_TYPES[i]
+        if M.is_enabled(cat) then
+            set[cat] = true
+        end
+    end
+    for i = 1, #M.DROP_TYPES do
+        local cat = M.DROP_TYPES[i]
+        if M.is_enabled(cat) then
+            set[cat] = true
+        end
+    end
+    if M.is_enabled(M.BODY_BAG_TYPE) then
+        set[M.BODY_BAG_TYPE] = true
+    end
+    return set
+end
+
 function M.get_color(category)
     if not category or not category.key then return { 1, 1, 1, 1 } end
     local settings = July.require("core.settings")

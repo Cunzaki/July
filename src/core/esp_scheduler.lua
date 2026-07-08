@@ -22,9 +22,16 @@ local function combat_active()
         and settings.enabled("havoc_aimbot_keybind")
 end
 
-local function any_world_esp()
+local function any_loot_esp()
     return settings.enabled("havoc_loot_enabled")
-        or settings.enabled("havoc_trap_enabled")
+end
+
+local function any_trap_esp()
+    return settings.enabled("havoc_trap_enabled")
+end
+
+local function any_world_esp()
+    return any_loot_esp() or any_trap_esp()
 end
 
 local function any_npc_esp()
@@ -47,7 +54,7 @@ function M.tick(frame_counter)
         end
     end
 
-    if any_world_esp() then
+    if any_loot_esp() then
         if t - last.loot >= constants.LOOT_SCAN_INTERVAL then
             last.loot = t
             loot_scan.queue_refresh()
@@ -63,7 +70,7 @@ function M.tick(frame_counter)
         loot_scan.tick_async(scan_budget)
     end
 
-    if settings.enabled("havoc_trap_enabled") then
+    if any_trap_esp() then
         if t - last.trap >= constants.TRAP_SCAN_INTERVAL then
             last.trap = t
             trap_scan.queue_refresh()
@@ -78,10 +85,10 @@ function M.tick(frame_counter)
         if any_npc_esp() then
             entity_scan.refresh_live()
         end
-        if any_world_esp() then
+        if any_loot_esp() then
             loot_scan.refresh_live()
         end
-        if settings.enabled("havoc_trap_enabled") then
+        if any_trap_esp() then
             trap_scan.refresh_live()
         end
     end
