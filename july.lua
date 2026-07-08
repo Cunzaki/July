@@ -1,11 +1,11 @@
 --[[
     July — Havoc for Project Vector
     https://github.com/Cunzaki/July
-    Built: 2026-07-08T02:01:22.474Z
+    Built: 2026-07-08T02:05:50.076Z
 ]]
 
 July = {
-    version = "0.2.0",
+    version = "0.3.0",
     debug = false,
     _mods = {},
     bundled = true,
@@ -1925,18 +1925,6 @@ function M.register_silent_aim(TAB, GROUP, prefix, parent_id)
     menu.add_checkbox(TAB, GROUP, prefix .. "bullet_manip", "Bullet Manipulation", false, root)
     menu.add_slider_float(TAB, GROUP, prefix .. "manip_dist", "Manip Distance", 0.1, 1.0, 1.0, "%.2f", { parent = prefix .. "bullet_manip" })
     menu.add_checkbox(TAB, GROUP, prefix .. "manip_status", "Manip Status Bar", false, { parent = prefix .. "bullet_manip" })
-
-    menu.add_separator(TAB, GROUP)
-    menu.add_label(TAB, GROUP, "Visuals")
-    menu.add_checkbox(TAB, GROUP, prefix .. "draw_fov", "Field Of View Circle", false, {
-        parent = parent_id,
-        colorpicker = { 0.55, 0.2, 1.0, 1.0 },
-    })
-    menu.add_combo(TAB, GROUP, prefix .. "fov_style", "FOV Style", { "Outline", "Filled Circle" }, 1, root)
-    menu.add_checkbox(TAB, GROUP, prefix .. "target_line", "Target Line", false, {
-        parent = parent_id,
-        colorpicker = { 1.0, 0.25, 0.25, 1.0 },
-    })
 end
 
 return M
@@ -1952,99 +1940,120 @@ local trap_types = July.require("game.trap_types")
 local M = {}
 M.TAB = constants.TAB
 
-M.NPC_DISPLAY_LABELS = {
-    "Box", "Fill", "Name", "Distance", "Held Item", "Type Tag",
-    "Health Bar", "Health Text", "Chams", "Skeleton",
-}
-
-M.NPC_DISPLAY_DEFAULTS = {
-    false, false, false, false, false, false,
-    false, false, false, false,
-}
-
-M.WEAPON_MOD_LABELS = { "No Recoil", "No Spread", "No Sway", "Fast Velocity" }
-M.WEAPON_MOD_DEFAULTS = { false, false, false, false }
-
 function M.register_all()
     if M._registered then return end
     M._registered = true
 
     local TAB = M.TAB
+    local P_AIM = "havoc_aimbot_enabled"
+    local P_SILENT = "july_silent_aim"
 
     menu.add_tab(TAB, "J", "full")
 
-    -- ── Combat: Aimbot ──
-    menu.add_group(TAB, "Aimbot", -1)
+    -- Row 1: Aimbot | Aim Visuals
+    menu.add_group(TAB, "Aimbot", 0)
+    menu.add_checkbox(TAB, "Aimbot", P_AIM, "Enable Aimbot", false, { key = 2, show_mode = false })
+    menu.add_combo(TAB, "Aimbot", "havoc_aimbot_bone", "Target Bone", { "Head", "Torso", "Closest" }, 0, { parent = P_AIM })
+    menu.add_combo(TAB, "Aimbot", "havoc_aimbot_target_type", "Priority", { "Crosshair", "Distance" }, 0, { parent = P_AIM })
+    menu.add_slider_int(TAB, "Aimbot", "havoc_aimbot_fov", "FOV Radius", 10, 500, 150, { parent = P_AIM })
+    menu.add_slider_int(TAB, "Aimbot", "havoc_aimbot_max_distance", "Max Distance", 0, 3000, 3000, { parent = P_AIM })
+    menu.add_slider_int(TAB, "Aimbot", "havoc_aimbot_smooth", "Smoothness", 1, 100, 8, { parent = P_AIM })
+    menu.add_checkbox(TAB, "Aimbot", "havoc_aimbot_sticky", "Sticky Target", false, { parent = P_AIM })
+    menu.add_checkbox(TAB, "Aimbot", "havoc_aimbot_target_players", "Target Players", false, { parent = P_AIM })
+    menu.add_checkbox(TAB, "Aimbot", "havoc_aimbot_target_npcs", "Target NPCs", true, { parent = P_AIM })
+    menu.add_separator(TAB, "Aimbot")
+    menu.add_checkbox(TAB, "Aimbot", P_SILENT, "Enable Silent Aim", false, { parent = P_AIM })
 
-    menu.add_checkbox(TAB, "Aimbot", "havoc_aimbot_enabled", "Enable NPC Aimbot", false, { key = 2, show_mode = false })
-    menu.add_combo(TAB, "Aimbot", "havoc_aimbot_bone", "Aimbot Bone", { "Head", "Torso" }, 0, { parent = "havoc_aimbot_enabled" })
-    menu.add_combo(TAB, "Aimbot", "havoc_aimbot_target_type", "Target Type", { "Closest To Crosshair", "Closest Distance" }, 0, { parent = "havoc_aimbot_enabled" })
-    menu.add_slider_int(TAB, "Aimbot", "havoc_aimbot_fov", "FOV Radius", 10, 500, 150, { parent = "havoc_aimbot_enabled" })
-    menu.add_slider_int(TAB, "Aimbot", "havoc_aimbot_max_distance", "Max Distance", 0, 3000, 3000, { parent = "havoc_aimbot_enabled" })
-    menu.add_checkbox(TAB, "Aimbot", "havoc_aimbot_draw_fov", "FOV Circle", false, {
-        parent = "havoc_aimbot_enabled", colorpicker = { 1.0, 1.0, 1.0, 1.0 },
+    menu.add_group(TAB, "Aim Visuals", 0, true)
+    menu.add_checkbox(TAB, "Aim Visuals", "havoc_aimbot_draw_fov", "Aimbot FOV Circle", false, {
+        parent = P_AIM, colorpicker = { 1.0, 1.0, 1.0, 1.0 },
     })
-    menu.add_checkbox(TAB, "Aimbot", "havoc_aimbot_fill_fov", "Fill FOV", false, {
-        parent = "havoc_aimbot_enabled", colorpicker = { 1.0, 1.0, 1.0, 0.15 },
+    menu.add_checkbox(TAB, "Aim Visuals", "havoc_aimbot_fill_fov", "Fill Aimbot FOV", false, {
+        parent = P_AIM, colorpicker = { 1.0, 1.0, 1.0, 0.15 },
     })
-    menu.add_checkbox(TAB, "Aimbot", "havoc_aimbot_target_line", "Target Line", false, {
-        parent = "havoc_aimbot_enabled", colorpicker = { 1.0, 0.3, 0.3, 1.0 },
+    menu.add_checkbox(TAB, "Aim Visuals", "havoc_aimbot_target_line", "Aimbot Target Line", false, {
+        parent = P_AIM, colorpicker = { 1.0, 0.3, 0.3, 1.0 },
     })
-    menu.add_checkbox(TAB, "Aimbot", "havoc_aimbot_rainbow", "Rainbow Colors", false, { parent = "havoc_aimbot_enabled" })
+    menu.add_checkbox(TAB, "Aim Visuals", "havoc_aimbot_rainbow", "Aimbot Rainbow", false, { parent = P_AIM })
+    menu.add_checkbox(TAB, "Aim Visuals", "july_silent_draw_fov", "Silent FOV Circle", false, {
+        parent = P_SILENT, colorpicker = { 0.55, 0.2, 1.0, 1.0 },
+    })
+    menu.add_combo(TAB, "Aim Visuals", "july_silent_fov_style", "Silent FOV Style", { "Outline", "Filled Circle" }, 1, { parent = P_SILENT })
+    menu.add_checkbox(TAB, "Aim Visuals", "july_silent_target_line", "Silent Target Line", false, {
+        parent = P_SILENT, colorpicker = { 1.0, 0.25, 0.25, 1.0 },
+    })
+    menu.add_checkbox(TAB, "Aim Visuals", "july_silent_rainbow", "Silent Rainbow", false, { parent = P_SILENT })
 
-    -- ── Combat: Silent Aim ──
-    menu.add_group(TAB, "Silent Aim", 0, true)
+    -- Row 2: Silent Options | NPC Visuals
+    menu.add_group(TAB, "Silent Options", 0)
+    July.require("features.combat.combat_menu").register_silent_aim(TAB, "Silent Options", "july_silent_", P_SILENT)
 
-    menu.add_checkbox(TAB, "Silent Aim", "july_silent_aim", "Enable Silent Aim", false)
-    July.require("features.combat.combat_menu").register_silent_aim(TAB, "Silent Aim", "july_silent_", "july_silent_aim")
-    menu.add_checkbox(TAB, "Silent Aim", "july_silent_rainbow", "Rainbow Colors", false, { parent = "july_silent_aim" })
-
-    -- ── NPC Visuals ──
-    menu.add_group(TAB, "NPC Visuals")
-
+    menu.add_group(TAB, "NPC Visuals", 0, true)
     menu.add_checkbox(TAB, "NPC Visuals", "havoc_npc_enabled", "Enable NPC Visuals", false)
-    menu.add_multicombo(TAB, "NPC Visuals", "havoc_npc_display", "Display Options", M.NPC_DISPLAY_LABELS, M.NPC_DISPLAY_DEFAULTS, { parent = "havoc_npc_enabled" })
-    menu.add_combo(TAB, "NPC Visuals", "havoc_npc_box_style", "Box Style", { "Corners", "Outline", "3D Box" }, 0, { parent = "havoc_npc_enabled" })
-    menu.add_combo(TAB, "NPC Visuals", "havoc_npc_chams_style", "Chams Style", { "Filled", "Wireframe" }, 0, { parent = "havoc_npc_enabled" })
-    menu.add_checkbox(TAB, "NPC Visuals", "havoc_npc_hide_dead", "Hide Dead NPCs", false, { parent = "havoc_npc_enabled" })
-    menu.add_checkbox(TAB, "NPC Visuals", "havoc_npc_rainbow", "Rainbow Colors", false, { parent = "havoc_npc_enabled" })
+    menu.add_checkbox(TAB, "NPC Visuals", "havoc_npc_box", "Box", false,
+        { parent = "havoc_npc_enabled", colorpicker = { 1.0, 1.0, 1.0, 1.0 } })
+    menu.add_combo(TAB, "NPC Visuals", "havoc_npc_box_style", "Box Style",
+        { "Corners", "Outline", "3D Box" }, 0, { parent = "havoc_npc_box" })
+    menu.add_checkbox(TAB, "NPC Visuals", "havoc_npc_box_fill", "Fill Box", false,
+        { parent = "havoc_npc_box", colorpicker = { 1.0, 1.0, 1.0, 0.35 } })
+    menu.add_checkbox(TAB, "NPC Visuals", "havoc_npc_name", "Name", false,
+        { parent = "havoc_npc_enabled", colorpicker = { 0.92, 0.92, 0.92, 1.0 } })
+    menu.add_checkbox(TAB, "NPC Visuals", "havoc_npc_distance", "Distance", false,
+        { parent = "havoc_npc_enabled", colorpicker = { 0.67, 0.67, 0.67, 1.0 } })
+    menu.add_checkbox(TAB, "NPC Visuals", "havoc_npc_held_item", "Held Item", false,
+        { parent = "havoc_npc_enabled", colorpicker = { 1.0, 0.85, 0.4, 1.0 } })
+    menu.add_checkbox(TAB, "NPC Visuals", "havoc_npc_npc_type", "Type Tag", false,
+        { parent = "havoc_npc_enabled", colorpicker = { 1.0, 0.5, 0.0, 0.85 } })
+    menu.add_checkbox(TAB, "NPC Visuals", "havoc_npc_health_bar", "Health Bar", false, { parent = "havoc_npc_enabled" })
+    menu.add_checkbox(TAB, "NPC Visuals", "havoc_npc_health_text", "Health Text", false,
+        { parent = "havoc_npc_enabled", colorpicker = { 0.3, 1.0, 0.4, 1.0 } })
+    menu.add_checkbox(TAB, "NPC Visuals", "havoc_npc_chams", "Chams", false,
+        { parent = "havoc_npc_enabled", colorpicker = { 1.0, 0.2, 0.2, 0.55 } })
+    menu.add_combo(TAB, "NPC Visuals", "havoc_npc_chams_style", "Chams Style",
+        { "Filled", "Wireframe" }, 0, { parent = "havoc_npc_chams" })
+    menu.add_checkbox(TAB, "NPC Visuals", "havoc_npc_skeleton", "Skeleton", false,
+        { parent = "havoc_npc_enabled", colorpicker = { 1.0, 1.0, 1.0, 1.0 } })
+    menu.add_checkbox(TAB, "NPC Visuals", "havoc_npc_hide_dead", "Hide Dead", false, { parent = "havoc_npc_enabled" })
+    menu.add_checkbox(TAB, "NPC Visuals", "havoc_npc_rainbow", "Rainbow", false, { parent = "havoc_npc_enabled" })
     menu.add_slider_int(TAB, "NPC Visuals", "havoc_npc_max_distance", "Max Distance", 0, 3000, 3000, { parent = "havoc_npc_enabled" })
-    menu.add_separator(TAB, "NPC Visuals")
-    menu.add_slider_int(TAB, "NPC Visuals", "havoc_npc_name_size", "Name Size", 6, 24, 13, { parent = "havoc_npc_enabled" })
-    menu.add_slider_int(TAB, "NPC Visuals", "havoc_npc_health_text_size", "Health Text Size", 6, 18, 8, { parent = "havoc_npc_enabled" })
-    menu.add_slider_int(TAB, "NPC Visuals", "havoc_npc_held_item_size", "Weapon Text Size", 6, 18, 10, { parent = "havoc_npc_enabled" })
-    menu.add_slider_int(TAB, "NPC Visuals", "havoc_npc_distance_size", "Distance Text Size", 6, 18, 10, { parent = "havoc_npc_enabled" })
-    menu.add_slider_int(TAB, "NPC Visuals", "havoc_npc_npc_type_size", "Type Tag Size", 6, 18, 9, { parent = "havoc_npc_enabled" })
+    menu.add_slider_int(TAB, "NPC Visuals", "havoc_npc_name_size", "Name Size", 6, 24, 13, { parent = "havoc_npc_name" })
+    menu.add_slider_int(TAB, "NPC Visuals", "havoc_npc_health_text_size", "Health Text Size", 6, 18, 8, { parent = "havoc_npc_health_text" })
+    menu.add_slider_int(TAB, "NPC Visuals", "havoc_npc_held_item_size", "Weapon Text Size", 6, 18, 10, { parent = "havoc_npc_held_item" })
+    menu.add_slider_int(TAB, "NPC Visuals", "havoc_npc_distance_size", "Distance Text Size", 6, 18, 10, { parent = "havoc_npc_distance" })
+    menu.add_slider_int(TAB, "NPC Visuals", "havoc_npc_npc_type_size", "Type Tag Size", 6, 18, 9, { parent = "havoc_npc_npc_type" })
 
-    -- ── Loot Visuals ──
-    menu.add_group(TAB, "Loot Visuals", -1)
-
+    -- Row 3: Loot | Traps
+    menu.add_group(TAB, "Loot Visuals", 0)
     menu.add_checkbox(TAB, "Loot Visuals", "havoc_loot_enabled", "Enable Loot Visuals", false)
-    menu.add_multicombo(TAB, "Loot Visuals", "havoc_loot_types", "Loot Types", loot_catalog.MULTICOMBO_LABELS, loot_catalog.MULTICOMBO_DEFAULTS, { parent = "havoc_loot_enabled" })
+    menu.add_multicombo(TAB, "Loot Visuals", "havoc_loot_types", "Loot Types",
+        loot_catalog.MULTICOMBO_LABELS, loot_catalog.MULTICOMBO_DEFAULTS, { parent = "havoc_loot_enabled" })
     menu.add_checkbox(TAB, "Loot Visuals", "havoc_loot_distance", "Show Distance", false, { parent = "havoc_loot_enabled" })
-    menu.add_combo(TAB, "Loot Visuals", "havoc_loot_distance_pos", "Distance Position", { "Same Line", "Below Name", "Left Of Name", "Right Of Name" }, 0, { parent = "havoc_loot_distance" })
+    menu.add_combo(TAB, "Loot Visuals", "havoc_loot_distance_pos", "Distance Position",
+        { "Same Line", "Below Name", "Left Of Name", "Right Of Name" }, 0, { parent = "havoc_loot_distance" })
     menu.add_checkbox(TAB, "Loot Visuals", "havoc_loot_marker", "Position Marker", false, { parent = "havoc_loot_enabled" })
-    menu.add_combo(TAB, "Loot Visuals", "havoc_loot_filter", "Loot Filter", { "Show All", "Show Locked Only", "Show Unlocked Only", "Show Opened Only", "Show Unopened Only" }, 0, { parent = "havoc_loot_enabled" })
-    menu.add_checkbox(TAB, "Loot Visuals", "havoc_loot_rainbow", "Rainbow Colors", false, { parent = "havoc_loot_enabled" })
+    menu.add_combo(TAB, "Loot Visuals", "havoc_loot_filter", "Loot Filter",
+        { "Show All", "Show Locked Only", "Show Unlocked Only", "Show Opened Only", "Show Unopened Only" }, 0,
+        { parent = "havoc_loot_enabled" })
+    menu.add_checkbox(TAB, "Loot Visuals", "havoc_loot_rainbow", "Rainbow", false, { parent = "havoc_loot_enabled" })
     menu.add_slider_int(TAB, "Loot Visuals", "havoc_loot_max_distance", "Max Distance", 0, 5000, 5000, { parent = "havoc_loot_enabled" })
     menu.add_slider_int(TAB, "Loot Visuals", "havoc_loot_text_size", "Text Size", 1, 15, 13, { parent = "havoc_loot_enabled" })
 
-    -- ── Trap Visuals ──
     menu.add_group(TAB, "Trap Visuals", 0, true)
-
     menu.add_checkbox(TAB, "Trap Visuals", "havoc_trap_enabled", "Enable Trap Visuals", false)
-    menu.add_multicombo(TAB, "Trap Visuals", "havoc_trap_types", "Trap Types", trap_types.MULTICOMBO_LABELS, trap_types.MULTICOMBO_DEFAULTS, { parent = "havoc_trap_enabled" })
-    menu.add_checkbox(TAB, "Trap Visuals", "havoc_trap_rainbow", "Rainbow Colors", false, { parent = "havoc_trap_enabled" })
+    menu.add_multicombo(TAB, "Trap Visuals", "havoc_trap_types", "Trap Types",
+        trap_types.MULTICOMBO_LABELS, trap_types.MULTICOMBO_DEFAULTS, { parent = "havoc_trap_enabled" })
+    menu.add_checkbox(TAB, "Trap Visuals", "havoc_trap_rainbow", "Rainbow", false, { parent = "havoc_trap_enabled" })
     menu.add_slider_int(TAB, "Trap Visuals", "havoc_trap_max_distance", "Max Distance", 0, 5000, 3000, { parent = "havoc_trap_enabled" })
     menu.add_slider_int(TAB, "Trap Visuals", "havoc_trap_text_size", "Text Size", 6, 18, 13, { parent = "havoc_trap_enabled" })
 
-    -- ── Weapon Mods ──
-    menu.add_group(TAB, "Weapon Mods", -1)
+    -- Row 4: Weapon Mods | Config
+    menu.add_group(TAB, "Weapon Mods", 0)
+    menu.add_checkbox(TAB, "Weapon Mods", "havoc_no_recoil", "No Recoil", false)
+    menu.add_checkbox(TAB, "Weapon Mods", "havoc_no_spread", "No Spread", false)
+    menu.add_checkbox(TAB, "Weapon Mods", "havoc_no_sway", "No Sway", false)
+    menu.add_checkbox(TAB, "Weapon Mods", "havoc_fast_vel", "Fast Bullet Velocity", false)
 
-    menu.add_multicombo(TAB, "Weapon Mods", "havoc_weapon_mods", "Weapon Mods", M.WEAPON_MOD_LABELS, M.WEAPON_MOD_DEFAULTS)
-
-    -- ── Config ──
-    menu.add_group(TAB, "Config", -1)
+    menu.add_group(TAB, "Config", 0, true)
 end
 
 return M
@@ -2059,9 +2068,10 @@ local settings = July.require("core.settings")
 local M = {}
 
 M.CONFIG_IDS = {
-    "havoc_aimbot_enabled", "havoc_aimbot_draw_fov", "havoc_aimbot_fill_fov", "havoc_aimbot_target_line",
-    "havoc_aimbot_rainbow", "havoc_aimbot_bone", "havoc_aimbot_target_type",
-    "havoc_aimbot_fov", "havoc_aimbot_max_distance",
+    "havoc_aimbot_enabled", "havoc_aimbot_bone", "havoc_aimbot_target_type",
+    "havoc_aimbot_fov", "havoc_aimbot_max_distance", "havoc_aimbot_smooth", "havoc_aimbot_sticky",
+    "havoc_aimbot_target_players", "havoc_aimbot_target_npcs",
+    "havoc_aimbot_draw_fov", "havoc_aimbot_fill_fov", "havoc_aimbot_target_line", "havoc_aimbot_rainbow",
     "july_silent_aim", "july_silent_rainbow",
     "july_silent_target_type", "july_silent_bone",
     "july_silent_filter_health", "july_silent_filter_visible", "july_silent_filter_team",
@@ -2070,8 +2080,10 @@ M.CONFIG_IDS = {
     "july_silent_wallbang", "july_silent_bullet_tp", "july_silent_tp_ray_mode", "july_silent_tp_ray_vis",
     "july_silent_bullet_manip", "july_silent_manip_dist", "july_silent_manip_status",
     "july_silent_draw_fov", "july_silent_fov_style", "july_silent_target_line",
-    "havoc_npc_enabled", "havoc_npc_display", "havoc_npc_box_style", "havoc_npc_chams_style",
-    "havoc_npc_hide_dead", "havoc_npc_rainbow",
+    "havoc_npc_enabled", "havoc_npc_box", "havoc_npc_box_style", "havoc_npc_box_fill",
+    "havoc_npc_name", "havoc_npc_distance", "havoc_npc_held_item", "havoc_npc_npc_type",
+    "havoc_npc_health_bar", "havoc_npc_health_text", "havoc_npc_chams", "havoc_npc_chams_style",
+    "havoc_npc_skeleton", "havoc_npc_hide_dead", "havoc_npc_rainbow",
     "havoc_npc_max_distance", "havoc_npc_name_size", "havoc_npc_health_text_size",
     "havoc_npc_held_item_size", "havoc_npc_distance_size", "havoc_npc_npc_type_size",
     "havoc_loot_enabled", "havoc_loot_types", "havoc_loot_distance", "havoc_loot_distance_pos",
@@ -2079,12 +2091,15 @@ M.CONFIG_IDS = {
     "havoc_loot_max_distance", "havoc_loot_text_size",
     "havoc_trap_enabled", "havoc_trap_types", "havoc_trap_rainbow",
     "havoc_trap_max_distance", "havoc_trap_text_size",
-    "havoc_weapon_mods",
+    "havoc_no_recoil", "havoc_no_spread", "havoc_no_sway", "havoc_fast_vel",
 }
 
 M.CONFIG_COLOR_IDS = {
     "havoc_aimbot_draw_fov", "havoc_aimbot_fill_fov", "havoc_aimbot_target_line",
     "july_silent_draw_fov", "july_silent_target_line", "july_silent_tp_ray_vis",
+    "havoc_npc_box", "havoc_npc_box_fill", "havoc_npc_name", "havoc_npc_distance",
+    "havoc_npc_held_item", "havoc_npc_npc_type", "havoc_npc_health_text",
+    "havoc_npc_chams", "havoc_npc_skeleton",
 }
 
 local function val_to_str(v)
@@ -2211,17 +2226,16 @@ local settings = July.require("core.settings")
 local M = {}
 
 local PATCHES = {
-    { index = 1, patch = { vPunchBase = 0, hPunchBase = 0 } },
-    { index = 2, patch = { spreadReduce = 100 } },
-    { index = 3, patch = { weight = 0, aimWeight = 0, unAimWeight = 0 } },
-    { index = 4, patch = { vel = 100000 } },
+    havoc_no_recoil = { vPunchBase = 0, hPunchBase = 0 },
+    havoc_no_spread = { spreadReduce = 100 },
+    havoc_no_sway = { weight = 0, aimWeight = 0, unAimWeight = 0 },
+    havoc_fast_vel = { vel = 100000 },
 }
 
 function M.apply()
-    local vals = settings.get("havoc_weapon_mods", {})
-    for i = 1, #PATCHES do
-        if type(vals) == "table" and vals[PATCHES[i].index] then
-            pcall(applygc, PATCHES[i].patch)
+    for id, patch in pairs(PATCHES) do
+        if settings.bool(id, false) then
+            pcall(applygc, patch)
         end
     end
 end
@@ -2660,14 +2674,16 @@ end)()
 
 -- ── features/combat/aimbot.lua ──
 July._mods["features.combat.aimbot"] = (function()
+local settings = July.require("core.settings")
 local constants = July.require("core.constants")
 local entity_scan = July.require("game.entity_scan")
+local env = July.require("core.env")
 
 local M = {}
 
-local aimbot_prev_target = nil
-local aimbot_locked_ent = nil
-local aimbot_next_acquire = 0
+local locked_ent = nil
+local locked_player = nil
+local next_acquire = 0
 
 M.draw_state = {
     scx = nil,
@@ -2680,128 +2696,296 @@ M.draw_state = {
     ty = 0,
 }
 
-local function get_aim_part(ent, bone_idx)
-    if bone_idx == 0 then
-        return ent.parts["Head"] or ent.root
-    else
-        return ent.parts["Torso"] or ent.parts["UpperTorso"] or ent.root
+local BONE_MAP = {
+    [0] = "Head",
+    [1] = "Torso",
+    [2] = "Closest",
+}
+
+local function screen_center()
+    if input and input.GetScreenCenter then
+        return input.GetScreenCenter()
     end
+    if input and input.get_screen_center then
+        return input.get_screen_center()
+    end
+    return 960, 540
 end
 
-local function evaluate_candidate(ent, bone_idx, cam_pos, max_dist)
-    local health = ent.humanoid.Health
-    if not (health and health > 0) then return nil end
-
-    local part = get_aim_part(ent, bone_idx)
-    if not part then return nil end
-
-    local pos = part.Position
-    if not pos then return nil end
-
-    local dist = (cam_pos - pos).Magnitude
-    if max_dist > 0 and dist > max_dist then return nil end
-
-    return pos, dist
+local function w2s(pos)
+    if not pos then return 0, 0, false end
+    local x = pos.X or pos.x
+    local y = pos.Y or pos.y
+    local z = pos.Z or pos.z
+    if utility.WorldToScreen then
+        return utility.WorldToScreen(x, y, z)
+    end
+    if utility.world_to_screen then
+        return utility.world_to_screen(x, y, z)
+    end
+    return 0, 0, false
 end
 
-function M.tick()
-    local settings = {
-        fov = menu.Get("havoc_aimbot_fov"),
-        draw_fov = menu.Get("havoc_aimbot_draw_fov"),
-        fill_fov = menu.Get("havoc_aimbot_fill_fov"),
-        bone_idx = menu.Get("havoc_aimbot_bone"),
-        target_type = menu.Get("havoc_aimbot_target_type"),
-        max_dist = menu.Get("havoc_aimbot_max_distance"),
-    }
-
-    local scx, scy = input.GetScreenCenter()
-
-    M.draw_state.scx = scx
-    M.draw_state.scy = scy
-    M.draw_state.fov = settings.fov
-    M.draw_state.draw_fov = settings.draw_fov
-    M.draw_state.fill_fov = settings.fill_fov
-
-    local key = menu.GetKey("havoc_aimbot_enabled")
-    if key == 0 then key = 2 end
-
-    local now = utility.GetTime()
-    local cam_pos = camera.GetPosition()
-    local entity_cache = entity_scan.get_cache()
-
-    local best_pos, best_model = nil, nil
-
-    if aimbot_locked_ent and now < aimbot_next_acquire then
-        local pos = evaluate_candidate(aimbot_locked_ent, settings.bone_idx, cam_pos, settings.max_dist)
-        if pos then
-            local sx, sy, svis = utility.WorldToScreen(pos.X, pos.Y, pos.Z)
-            if svis then
-                local dx, dy = sx - scx, sy - scy
-                local px_dist = math.sqrt(dx * dx + dy * dy)
-                if px_dist <= settings.fov then
-                    best_pos = pos
-                    best_model = aimbot_locked_ent.model
+local function get_npc_aim_pos(ent, bone_idx, scx, scy)
+    if bone_idx == 2 then
+        local best, best_d = nil, math.huge
+        for name, part in pairs(ent.parts) do
+            local pos = part.Position
+            if pos then
+                local sx, sy, ok = w2s(pos)
+                if ok then
+                    local d = (sx - scx) ^ 2 + (sy - scy) ^ 2
+                    if d < best_d then
+                        best_d = d
+                        best = pos
+                    end
                 end
             end
         end
+        return best
     end
+    local bone = BONE_MAP[bone_idx] or "Head"
+    if bone == "Head" then
+        return ent.parts["Head"] and ent.parts["Head"].Position or ent.root.Position
+    end
+    return ent.parts["Torso"] and ent.parts["Torso"].Position
+        or ent.parts["UpperTorso"] and ent.parts["UpperTorso"].Position
+        or ent.root.Position
+end
 
-    if not best_pos then
-        aimbot_next_acquire = now + constants.AIMBOT_ACQUIRE_INTERVAL
-
-        local best_score = math.huge
-        local best_ent = nil
-
-        for i = 1, #entity_cache do
-            local ent = entity_cache[i]
-            local pos, dist = evaluate_candidate(ent, settings.bone_idx, cam_pos, settings.max_dist)
-            if pos then
-                local sx, sy, svis = utility.WorldToScreen(pos.X, pos.Y, pos.Z)
-                if svis then
-                    local dx, dy = sx - scx, sy - scy
-                    local px_dist = math.sqrt(dx * dx + dy * dy)
-                    if px_dist <= settings.fov then
-                        local score = (settings.target_type == 1) and dist or px_dist
-                        if score < best_score then
-                            best_score = score
-                            best_pos = pos
-                            best_model = ent.model
-                            best_ent = ent
+local function get_player_aim_pos(char, bone_idx, scx, scy)
+    if not char or not env.is_valid(char) then return nil end
+    if bone_idx == 2 then
+        local best, best_d = nil, math.huge
+        local names = { "Head", "UpperTorso", "Torso", "HumanoidRootPart" }
+        for i = 1, #names do
+            local part = env.find_child(char, names[i])
+            if part then
+                local ok, pos = pcall(function() return part.Position end)
+                if ok and pos then
+                    local sx, sy, vis = w2s(pos)
+                    if vis then
+                        local d = (sx - scx) ^ 2 + (sy - scy) ^ 2
+                        if d < best_d then
+                            best_d = d
+                            best = pos
                         end
                     end
                 end
             end
         end
+        return best
+    end
+    local bone = bone_idx == 1 and "UpperTorso" or "Head"
+    local part = env.find_child(char, bone) or env.find_child(char, "Head")
+    if part then
+        local ok, pos = pcall(function() return part.Position end)
+        if ok then return pos end
+    end
+    return nil
+end
 
-        aimbot_locked_ent = best_ent
+local function npc_alive(ent)
+    local hp = ent.humanoid and ent.humanoid.Health
+    return hp and hp > 0
+end
+
+local function player_alive(char)
+    local hum = env.find_child(char, "Humanoid")
+    if not hum then return false end
+    local hp = hum.Health or hum.health
+    return hp and hp > 0
+end
+
+local function evaluate_npc(ent, bone_idx, cam_pos, max_dist, scx, scy, fov, crosshair_prio)
+    if not npc_alive(ent) then return nil end
+    local pos = get_npc_aim_pos(ent, bone_idx, scx, scy)
+    if not pos then return nil end
+    local px, py, pz = pos.X or pos.x, pos.Y or pos.y, pos.Z or pos.z
+    local dist = (cam_pos - pos).Magnitude
+    if max_dist > 0 and dist > max_dist then return nil end
+    local sx, sy, vis = w2s(pos)
+    if not vis then return nil end
+    local px_dist = math.sqrt((sx - scx) ^ 2 + (sy - scy) ^ 2)
+    if px_dist > fov then return nil end
+    return {
+        kind = "npc",
+        ent = ent,
+        pos = { x = px, y = py, z = pz },
+        score = crosshair_prio and px_dist or dist,
+        sx = sx,
+        sy = sy,
+    }
+end
+
+local function evaluate_player(p, bone_idx, cam_pos, max_dist, scx, scy, fov, crosshair_prio)
+    local lp = env.get_local_player()
+    if p == lp then return nil end
+    local char = p.Character or p.character
+    if not char or not player_alive(char) then return nil end
+    local pos = get_player_aim_pos(char, bone_idx, scx, scy)
+    if not pos then return nil end
+    local px, py, pz = pos.X or pos.x, pos.Y or pos.y, pos.Z or pos.z
+    local dist = (cam_pos - pos).Magnitude
+    if max_dist > 0 and dist > max_dist then return nil end
+    local sx, sy, vis = w2s(pos)
+    if not vis then return nil end
+    local px_dist = math.sqrt((sx - scx) ^ 2 + (sy - scy) ^ 2)
+    if px_dist > fov then return nil end
+    return {
+        kind = "player",
+        player = p,
+        char = char,
+        pos = { x = px, y = py, z = pz },
+        score = crosshair_prio and px_dist or dist,
+        sx = sx,
+        sy = sy,
+    }
+end
+
+local function smooth_mouse(sx, sy, scx, scy, smooth)
+    if not input or not input.move_mouse then return false end
+    local dx, dy = sx - scx, sy - scy
+    local mx, my = dx / smooth, dy / smooth
+    if dx > 0 and mx < 0.5 then mx = 0.5 elseif dx < 0 and mx > -0.5 then mx = -0.5 end
+    if dy > 0 and my < 0.5 then my = 0.5 elseif dy < 0 and my > -0.5 then my = -0.5 end
+    input.move_mouse(mx, my)
+    return true
+end
+
+local function aim_at(target, smooth)
+    if not target or not target.pos then return false end
+    local x, y, z = target.pos.x, target.pos.y, target.pos.z
+
+    if camera and camera.look_at then
+        return pcall(camera.look_at, x, y, z, smooth) == true
+    end
+    if camera and camera.LookAt then
+        return pcall(camera.LookAt, x, y, z, smooth) == true
     end
 
-    aimbot_prev_target = best_model
+    local scx, scy = screen_center()
+    if target.sx and target.sy then
+        return smooth_mouse(target.sx, target.sy, scx, scy, smooth)
+    end
 
-    if best_pos then
-        local fx, fy, fvis = utility.WorldToScreen(best_pos.X, best_pos.Y, best_pos.Z)
-        if fvis then
-            M.draw_state.active = true
-            M.draw_state.tx = fx
-            M.draw_state.ty = fy
-        else
-            M.draw_state.active = false
+    if target.kind == "npc" and target.ent and camera.TrackTarget then
+        local bone_idx = settings.num("havoc_aimbot_bone", 0)
+        local part = get_npc_aim_pos(target.ent, bone_idx, scx, scy)
+        if part then
+            local key = settings.get("havoc_aimbot_enabled") and (menu.get_key and menu.get_key("havoc_aimbot_enabled") or 2) or 2
+            if key == 0 then key = 2 end
+            pcall(camera.TrackTarget, part, target.ent.humanoid, key, settings.num("havoc_aimbot_max_distance", 3000))
+            return true
         end
+    end
 
-        local aim_part = get_aim_part(aimbot_locked_ent, settings.bone_idx)
-        camera.TrackTarget(aim_part, aimbot_locked_ent.humanoid, key, settings.max_dist)
+    return false
+end
+
+local function find_target(cam_pos, scx, scy, fov, bone_idx, max_dist, crosshair_prio, target_players, target_npcs)
+    local best, best_score = nil, math.huge
+    local players = entity.GetPlayers and entity.GetPlayers() or {}
+
+    if target_npcs then
+        local cache = entity_scan.get_cache()
+        for i = 1, #cache do
+            local hit = evaluate_npc(cache[i], bone_idx, cam_pos, max_dist, scx, scy, fov, crosshair_prio)
+            if hit and hit.score < best_score then
+                best_score = hit.score
+                best = hit
+            end
+        end
+    end
+
+    if target_players then
+        for i = 1, #players do
+            local hit = evaluate_player(players[i], bone_idx, cam_pos, max_dist, scx, scy, fov, crosshair_prio)
+            if hit and hit.score < best_score then
+                best_score = hit.score
+                best = hit
+            end
+        end
+    end
+
+    return best
+end
+
+local function sticky_valid(target, cam_pos, scx, scy, fov, bone_idx, max_dist)
+    if not target then return false end
+    if target.kind == "npc" then
+        local hit = evaluate_npc(target.ent, bone_idx, cam_pos, max_dist, scx, scy, fov, true)
+        return hit ~= nil
+    end
+    if target.kind == "player" then
+        local hit = evaluate_player(target.player, bone_idx, cam_pos, max_dist, scx, scy, fov, true)
+        return hit ~= nil
+    end
+    return false
+end
+
+function M.tick()
+    if not settings.enabled("havoc_aimbot_enabled") then
+        M.reset()
+        return
+    end
+
+    local scx, scy = screen_center()
+    local fov = settings.num("havoc_aimbot_fov", 150)
+    local bone_idx = settings.num("havoc_aimbot_bone", 0)
+    local max_dist = settings.num("havoc_aimbot_max_distance", 3000)
+    local smooth = math.max(1, settings.num("havoc_aimbot_smooth", 8))
+    local sticky = settings.bool("havoc_aimbot_sticky", false)
+    local crosshair_prio = settings.num("havoc_aimbot_target_type", 0) == 0
+    local target_players = settings.bool("havoc_aimbot_target_players", false)
+    local target_npcs = settings.bool("havoc_aimbot_target_npcs", true)
+
+    M.draw_state.scx = scx
+    M.draw_state.scy = scy
+    M.draw_state.fov = fov
+    M.draw_state.draw_fov = settings.bool("havoc_aimbot_draw_fov", false)
+    M.draw_state.fill_fov = settings.bool("havoc_aimbot_fill_fov", false)
+
+    local cam_pos = camera.GetPosition and camera.GetPosition() or camera.get_position and camera.get_position()
+    if not cam_pos then return end
+
+    local now = utility.GetTime and utility.GetTime() or os.clock()
+    local target = locked_ent
+
+    if sticky and target and sticky_valid(target, cam_pos, scx, scy, fov, bone_idx, max_dist) then
+        if target.kind == "npc" then
+            local hit = evaluate_npc(target.ent, bone_idx, cam_pos, max_dist, scx, scy, fov, crosshair_prio)
+            if hit then target = hit end
+        else
+            local hit = evaluate_player(target.player, bone_idx, cam_pos, max_dist, scx, scy, fov, crosshair_prio)
+            if hit then target = hit end
+        end
+    elseif now >= next_acquire or not target then
+        next_acquire = now + constants.AIMBOT_ACQUIRE_INTERVAL
+        target = find_target(cam_pos, scx, scy, fov, bone_idx, max_dist, crosshair_prio, target_players, target_npcs)
+        if sticky then
+            locked_ent = target
+        end
+    end
+
+    if target then
+        M.draw_state.active = true
+        M.draw_state.tx = target.sx
+        M.draw_state.ty = target.sy
+        aim_at(target, smooth)
     else
         M.draw_state.active = false
-        camera.StopTracking()
+        if camera.StopTracking then camera.StopTracking() end
     end
 end
 
 function M.reset()
-    aimbot_prev_target = nil
-    aimbot_locked_ent = nil
+    locked_ent = nil
+    locked_player = nil
     M.draw_state.scx = nil
     M.draw_state.active = false
-    camera.StopTracking()
+    if camera and camera.StopTracking then camera.StopTracking() end
+    if camera and camera.stop_tracking then camera.stop_tracking() end
 end
 
 return M
@@ -2866,7 +3050,7 @@ function M.tick()
     M.draw_state.manip = { state = "off" }
     M.draw_state.tp_path = nil
 
-    if not settings.enabled(P_MASTER) or not silent_ray.available() then
+    if not settings.enabled("havoc_aimbot_enabled") or not settings.enabled(P_MASTER) or not silent_ray.available() then
         locked_target = nil
         silent_ray.stop()
         return
@@ -2937,7 +3121,6 @@ end)()
 
 -- ── features/visuals/npc_esp.lua ──
 July._mods["features.visuals.npc_esp"] = (function()
-local constants = July.require("core.constants")
 local settings = July.require("core.settings")
 local color_util = July.require("core.color_util")
 local draw_util = July.require("core.draw_util")
@@ -2947,40 +3130,12 @@ local M = {}
 
 local frame_counter = 0
 
-local DISPLAY = {
-    box = 1,
-    fill = 2,
-    name = 3,
-    dist = 4,
-    held_item = 5,
-    npc_type = 6,
-    health_bar = 7,
-    health_text = 8,
-    chams = 9,
-    skeleton = 10,
-}
-
-local NPC_COLORS = {
-    box = { 1.0, 1.0, 1.0, 1.0 },
-    fill = { 1.0, 1.0, 1.0, 0.35 },
-    name = { 0.92, 0.92, 0.92, 1.0 },
-    dist = { 0.67, 0.67, 0.67, 1.0 },
-    held_item = { 1.0, 0.85, 0.4, 1.0 },
-    npc_type = { 1.0, 0.5, 0.0, 0.85 },
-    health_text = { 0.3, 1.0, 0.4, 1.0 },
-    chams = { 1.0, 0.2, 0.2, 0.55 },
-    skeleton = { 1.0, 1.0, 1.0, 1.0 },
-}
-
 function M.set_frame_counter(n)
     frame_counter = n
 end
 
-local function display_on(vals, idx)
-    return type(vals) == "table" and vals[idx] == true
-end
-
 local function get_npc_type(entity_name)
+    local constants = July.require("core.constants")
     if string.find(entity_name, "[Sniper]", 1, true) then return "Sniper" end
     if constants.NPC_BOSS_NAMES[entity_name] then return "Boss" end
     if entity_name == "Sentry" then return nil end
@@ -3019,19 +3174,18 @@ function M.render(cam_pos)
     local entity_cache = entity_scan.get_cache()
     if #entity_cache == 0 then return end
 
-    local display = settings.get("havoc_npc_display", {})
     local ent_rgb = settings.bool("havoc_npc_rainbow", false) and color_util.rainbow_color(0.4) or nil
 
-    local box_on = display_on(display, DISPLAY.box)
-    local fill_on = display_on(display, DISPLAY.fill)
-    local name_on = display_on(display, DISPLAY.name)
-    local dist_on = display_on(display, DISPLAY.dist)
-    local held_on = display_on(display, DISPLAY.held_item)
-    local type_on = display_on(display, DISPLAY.npc_type)
-    local health_bar_on = display_on(display, DISPLAY.health_bar)
-    local health_text_on = display_on(display, DISPLAY.health_text)
-    local chams_on = display_on(display, DISPLAY.chams)
-    local skeleton_on = display_on(display, DISPLAY.skeleton)
+    local box_on = settings.bool("havoc_npc_box", false)
+    local fill_on = settings.bool("havoc_npc_box_fill", false)
+    local name_on = settings.bool("havoc_npc_name", false)
+    local dist_on = settings.bool("havoc_npc_distance", false)
+    local held_on = settings.bool("havoc_npc_held_item", false)
+    local type_on = settings.bool("havoc_npc_npc_type", false)
+    local health_bar_on = settings.bool("havoc_npc_health_bar", false)
+    local health_text_on = settings.bool("havoc_npc_health_text", false)
+    local chams_on = settings.bool("havoc_npc_chams", false)
+    local skeleton_on = settings.bool("havoc_npc_skeleton", false)
 
     local box_style = settings.num("havoc_npc_box_style", 0)
     local chams_style = settings.num("havoc_npc_chams_style", 0)
@@ -3067,7 +3221,7 @@ function M.render(cam_pos)
                 local dist = (cam_pos - root_pos).Magnitude
                 if dist <= max_dist then
                     local sc = ent.scr_bounds
-                    local do_update = (frame_counter + i) % constants.BOUNDS_UPDATE_INTERVAL == 0
+                    local do_update = (frame_counter + i) % July.require("core.constants").BOUNDS_UPDATE_INTERVAL == 0
 
                     if needs_full_bounds or chams_on or skeleton_on then
                         local part_pos = {}
@@ -3077,15 +3231,17 @@ function M.render(cam_pos)
                         end
                         local bounds = draw_util.get_entity_bounds(part_pos, ent.part_size, root_pos)
                         sc.x = bounds.x; sc.y = bounds.y; sc.w = bounds.w; sc.h = bounds.h; sc.valid = bounds.valid
-
                         if chams_on and bounds.valid then
-                            draw_util.draw_entity_chams(part_pos, ent.part_size, ent_rgb or NPC_COLORS.chams, chams_style)
+                            draw_util.draw_entity_chams(part_pos, ent.part_size,
+                                ent_rgb or settings.color("havoc_npc_chams", { 1, 0.2, 0.2, 0.55 }), chams_style)
                         end
                         if skeleton_on and bounds.valid then
-                            draw_util.draw_entity_skeleton(part_pos, ent_rgb or NPC_COLORS.skeleton)
+                            draw_util.draw_entity_skeleton(part_pos,
+                                ent_rgb or settings.color("havoc_npc_skeleton", { 1, 1, 1, 1 }))
                         end
                         if needs_full_bounds and bounds.valid then
-                            draw_util.draw_entity_3d_box(part_pos, ent.part_size, ent_rgb or NPC_COLORS.box)
+                            draw_util.draw_entity_3d_box(part_pos, ent.part_size,
+                                ent_rgb or settings.color("havoc_npc_box", { 1, 1, 1, 1 }))
                         end
                     elseif do_update then
                         local bounds = draw_util.get_entity_bounds_fallback(root_pos)
@@ -3095,22 +3251,22 @@ function M.render(cam_pos)
                     if sc.valid then
                         local name_str = ent.model.Name
                         esp_opts.box = box_on
-                        esp_opts.box_color = ent_rgb or NPC_COLORS.box
+                        esp_opts.box_color = ent_rgb or settings.color("havoc_npc_box", { 1, 1, 1, 1 })
                         esp_opts.box_fill = fill_on
-                        esp_opts.box_fill_color = ent_rgb or NPC_COLORS.fill
+                        esp_opts.box_fill_color = ent_rgb or settings.color("havoc_npc_box_fill", { 1, 1, 1, 0.35 })
                         esp_opts.name = name_on
-                        esp_opts.name_color = ent_rgb or NPC_COLORS.name
+                        esp_opts.name_color = ent_rgb or settings.color("havoc_npc_name", { 0.92, 0.92, 0.92, 1 })
                         esp_opts.dist = dist_on
-                        esp_opts.dist_color = ent_rgb or NPC_COLORS.dist
+                        esp_opts.dist_color = ent_rgb or settings.color("havoc_npc_distance", { 0.67, 0.67, 0.67, 1 })
                         esp_opts.health_bar = health_bar_on
                         esp_opts.health_text = health_text_on
-                        esp_opts.health_text_color = ent_rgb or NPC_COLORS.health_text
+                        esp_opts.health_text_color = ent_rgb or settings.color("havoc_npc_health_text", { 0.3, 1, 0.4, 1 })
                         esp_opts.npc_type_on = type_on
-                        esp_opts.npc_type_color = ent_rgb or NPC_COLORS.npc_type
+                        esp_opts.npc_type_color = ent_rgb or settings.color("havoc_npc_npc_type", { 1, 0.5, 0, 0.85 })
                         esp_opts.health = health
                         esp_opts.max_health = max_health
                         esp_opts.held_item = held_on and get_held_item_name(ent) or nil
-                        esp_opts.held_item_color = ent_rgb or NPC_COLORS.held_item
+                        esp_opts.held_item_color = ent_rgb or settings.color("havoc_npc_held_item", { 1, 0.85, 0.4, 1 })
                         esp_opts.npc_type = get_npc_type(name_str)
 
                         draw_util.draw_esp({ x = sc.x, y = sc.y, w = sc.w, h = sc.h, valid = true }, name_str, dist, esp_opts)
@@ -3410,12 +3566,12 @@ function M.update()
             aimbot_tick_counter = 0
             aimbot.tick()
         end
+        silent_aim.tick()
     else
         aimbot_tick_counter = 0
         aimbot.reset()
+        silent_aim.reset()
     end
-
-    silent_aim.tick()
 end
 
 return M

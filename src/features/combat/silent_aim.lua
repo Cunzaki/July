@@ -54,7 +54,7 @@ function M.tick()
     M.draw_state.manip = { state = "off" }
     M.draw_state.tp_path = nil
 
-    if not settings.enabled(P_MASTER) or not silent_ray.available() then
+    if not settings.enabled("havoc_aimbot_enabled") or not settings.enabled(P_MASTER) or not silent_ray.available() then
         locked_target = nil
         silent_ray.stop()
         return

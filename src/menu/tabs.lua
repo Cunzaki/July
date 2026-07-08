@@ -62,12 +62,12 @@ function M.update()
             aimbot_tick_counter = 0
             aimbot.tick()
         end
+        silent_aim.tick()
     else
         aimbot_tick_counter = 0
         aimbot.reset()
+        silent_aim.reset()
     end
-
-    silent_aim.tick()
 end
 
 return M

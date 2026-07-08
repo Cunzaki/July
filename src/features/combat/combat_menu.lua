@@ -53,18 +53,6 @@ function M.register_silent_aim(TAB, GROUP, prefix, parent_id)
     menu.add_checkbox(TAB, GROUP, prefix .. "bullet_manip", "Bullet Manipulation", false, root)
     menu.add_slider_float(TAB, GROUP, prefix .. "manip_dist", "Manip Distance", 0.1, 1.0, 1.0, "%.2f", { parent = prefix .. "bullet_manip" })
     menu.add_checkbox(TAB, GROUP, prefix .. "manip_status", "Manip Status Bar", false, { parent = prefix .. "bullet_manip" })
-
-    menu.add_separator(TAB, GROUP)
-    menu.add_label(TAB, GROUP, "Visuals")
-    menu.add_checkbox(TAB, GROUP, prefix .. "draw_fov", "Field Of View Circle", false, {
-        parent = parent_id,
-        colorpicker = { 0.55, 0.2, 1.0, 1.0 },
-    })
-    menu.add_combo(TAB, GROUP, prefix .. "fov_style", "FOV Style", { "Outline", "Filled Circle" }, 1, root)
-    menu.add_checkbox(TAB, GROUP, prefix .. "target_line", "Target Line", false, {
-        parent = parent_id,
-        colorpicker = { 1.0, 0.25, 0.25, 1.0 },
-    })
 end
 
 return M
