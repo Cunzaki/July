@@ -54,11 +54,13 @@ local function npc_from_entity(ent)
     return {
         is_npc = true,
         inst = ent.model,
+        model = ent.model,
         humanoid = ent.humanoid,
         root = ent.root,
         parts = ent.parts,
         name = ent.model.Name,
         kind = get_npc_kind(ent),
+        _held_name = ent._held_name,
     }
 end
 
@@ -442,7 +444,7 @@ function M.is_target_valid(target, prefix, cx, cy, fov)
     local bone_label = M.bone_name(prefix)
     local origin = resolve_origin()
     local fov_sq = fov * fov
-    local hit = evaluate_candidate(target, bone_label, cx, cy, fov_sq, origin, prefix, true)
+    local hit = evaluate_candidate(target, bone_label, cx, cy, fov_sq, origin, prefix, false)
     return hit ~= nil
 end
 

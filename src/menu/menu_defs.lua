@@ -15,7 +15,6 @@ function M.register_all()
     local G = menu_util.G
     local P_AIM = "havoc_aimbot_enabled"
     local P_SILENT = "july_silent_aim"
-    local P_WEAPON = "havoc_weapon_mods_enabled"
     local P_NPC = "havoc_npc_enabled"
     local P_LOOT = "havoc_loot_enabled"
     local P_TRAP = "havoc_trap_enabled"
@@ -24,7 +23,7 @@ function M.register_all()
     menu_util.ensure_groups()
 
     -- Row 1: Aimbot | Silent Aim
-    menu.add_checkbox(TAB, G.AIMBOT, P_AIM, "Enable Aimbot", false, { show_mode = false, key = 2 })
+    menu_util.register_keybind(TAB, G.AIMBOT, P_AIM, "Enable Aimbot", false)
     menu.add_combo(TAB, G.AIMBOT, "havoc_aimbot_bone", "Aimbot Target Bone", combat_menu.SILENT_BONES, 1, { parent = P_AIM })
     menu.add_combo(TAB, G.AIMBOT, "havoc_aimbot_target_type", "Aimbot Priority", { "Crosshair", "Distance" }, 0, { parent = P_AIM })
     menu.add_slider_int(TAB, G.AIMBOT, "havoc_aimbot_fov", "Aimbot FOV Radius", 10, 500, 150, { parent = P_AIM })
@@ -45,12 +44,13 @@ function M.register_all()
     menu.add_checkbox(TAB, G.AIMBOT, "havoc_aimbot_rainbow", "Aimbot Rainbow", false, { parent = P_AIM })
 
     menu_util.bind_children(P_AIM, {
+        P_AIM .. "_mode",
         "havoc_aimbot_bone", "havoc_aimbot_target_type", "havoc_aimbot_fov", "havoc_aimbot_max_distance",
         "havoc_aimbot_smooth", "havoc_aimbot_sticky", "havoc_aimbot_target_players", "havoc_aimbot_target_npcs",
         "havoc_aimbot_draw_fov", "havoc_aimbot_fill_fov", "havoc_aimbot_target_line", "havoc_aimbot_rainbow",
     })
 
-    menu.add_checkbox(TAB, G.SILENT, P_SILENT, "Enable Silent Aim", false, { show_mode = false })
+    menu_util.register_keybind(TAB, G.SILENT, P_SILENT, "Enable Silent Aim", false)
     combat_menu.register_silent_aim(TAB, G.SILENT, S, P_SILENT)
     menu.add_checkbox(TAB, G.SILENT, "july_silent_draw_fov", "Silent FOV Circle", false, {
         parent = P_SILENT, colorpicker = { 0.55, 0.2, 1.0, 1.0 },
@@ -62,16 +62,15 @@ function M.register_all()
     menu.add_checkbox(TAB, G.SILENT, "july_silent_rainbow", "Silent Rainbow", false, { parent = P_SILENT })
 
     menu_util.bind_children(P_SILENT, {
-        S .. "target_type", S .. "bone", S .. "lmb_only", S .. "rmb_only",
+        P_SILENT .. "_mode",
+        S .. "target_type", S .. "bone",
         S .. "filter_health", S .. "filter_visible", S .. "filter_team",
         S .. "target_players", S .. "target_npcs", S .. "target_npc_soldiers", S .. "target_npc_bosses",
         S .. "max_dist", S .. "fov", S .. "sticky",
-        S .. "wallbang", S .. "bullet_tp", S .. "tp_ray_mode", S .. "tp_ray_vis",
         S .. "bullet_manip", S .. "manip_dist", S .. "manip_status", S .. "manip_ring", S .. "manip_peek_vis",
         "july_silent_draw_fov", "july_silent_fov_style", "july_silent_target_line", "july_silent_rainbow",
     })
     menu_util.bind_children(S .. "target_npcs", { S .. "target_npc_soldiers", S .. "target_npc_bosses" })
-    menu_util.bind_children(S .. "bullet_tp", { S .. "tp_ray_mode", S .. "tp_ray_vis" })
     menu_util.bind_children(S .. "bullet_manip", { S .. "manip_dist", S .. "manip_status", S .. "manip_ring", S .. "manip_peek_vis" })
 
     -- Row 2: NPC Visuals | World Visuals
@@ -182,17 +181,6 @@ function M.register_all()
     menu_util.bind_children("havoc_trap_distance", { "havoc_trap_distance_pos" })
     menu_util.bind_children("havoc_target_gear", {
         "havoc_target_gear_fov", "havoc_target_gear_gear_size", "havoc_target_gear_top",
-    })
-
-    -- Row 3: Weapon Mods | Config
-    menu_util.register_keybind(TAB, G.WEAPON, P_WEAPON, "Enable Weapon Mods", false)
-    menu.add_checkbox(TAB, G.WEAPON, "havoc_no_recoil", "No Recoil", false, { parent = P_WEAPON })
-    menu.add_checkbox(TAB, G.WEAPON, "havoc_no_spread", "No Spread", false, { parent = P_WEAPON })
-    menu.add_checkbox(TAB, G.WEAPON, "havoc_no_sway", "No Sway", false, { parent = P_WEAPON })
-    menu.add_checkbox(TAB, G.WEAPON, "havoc_fast_vel", "Fast Bullet Velocity", false, { parent = P_WEAPON })
-    menu_util.bind_children(P_WEAPON, {
-        "havoc_no_recoil", "havoc_no_spread", "havoc_no_sway", "havoc_fast_vel",
-        P_WEAPON .. "_mode",
     })
 
     menu_util.sync_masters()

@@ -2,7 +2,7 @@ local M = {}
 
 local DEFAULT_STEPS = 12
 local MIN_RADIUS = 0.1
-local MAX_RADIUS = 5
+local MAX_RADIUS = 8
 local CACHE_MS = 200
 
 local cache = {

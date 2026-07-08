@@ -11,7 +11,6 @@ local MANIP_LABELS = {
     direct = "MANIP: CLEAR SHOT",
     ready = "MANIP: RAY READY",
     blocked = "MANIP: NO PEEK",
-    tp = "BULLET TP",
     off = "",
 }
 
@@ -20,7 +19,7 @@ local function manip_active(state)
 end
 
 local function manip_ready(state)
-    return state.state == "ready" or state.state == "direct" or state.state == "tp"
+    return state.state == "ready" or state.state == "direct"
 end
 
 function M.render()
@@ -49,9 +48,6 @@ function M.render()
 
     if settings.bool(prefix .. "manip_status", false) and manip_active(manip) then
         local label = MANIP_LABELS[manip.state] or "MANIP: ..."
-        if manip.state == "tp" and manip.tp_mode then
-            label = "BULLET TP: " .. manip.tp_mode
-        end
         local col = manip_ready(manip) and { 0.2, 1.0, 0.3, 1.0 } or { 1.0, 0.2, 0.2, 1.0 }
         local tw = draw.GetTextSize(label, 11)
         draw.Text(state.scx - tw * 0.5, state.scy + state.fov + 10, label, col, 11)
@@ -89,17 +85,6 @@ function M.render()
             if ray_from then
                 world_vis.draw_link(ray_from, state.aim_world, { 1, 0.45, 0.2, 0.55 }, 1.5)
             end
-        end
-    end
-
-    if settings.bool(prefix .. "tp_ray_vis", false) and state.tp_path and #state.tp_path >= 2 then
-        local col = settings.color(prefix .. "tp_ray_vis", { 0.95, 0.45, 1.0, 0.9 })
-        world_vis.draw_world_path(state.tp_path, col, 2)
-        if manip.player_origin and state.aim_world then
-            world_vis.draw_cross(manip.player_origin.x, manip.player_origin.y, manip.player_origin.z, 0.6, col, 2)
-        end
-        if manip.bone_aim then
-            world_vis.draw_cross(manip.bone_aim.x, manip.bone_aim.y, manip.bone_aim.z, 0.45, { 1, 0.85, 0.2, 0.95 }, 2)
         end
     end
 end

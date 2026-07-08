@@ -8,30 +8,67 @@ local function url_for(asset_id_or_url)
     if type(asset_id_or_url) == "string" and asset_id_or_url:find("https://", 1, true) then
         return asset_id_or_url
     end
-    return asset_urls.item_png(asset_id_or_url) or asset_urls.roblox_thumb(asset_id_or_url)
+    return asset_urls.decal_url(asset_id_or_url)
+        or asset_urls.item_png(asset_id_or_url)
+        or asset_urls.roblox_thumb(asset_id_or_url)
+        or asset_urls.roblox_thumb_legacy(asset_id_or_url)
+        or asset_urls.asset_delivery(asset_id_or_url)
+        or asset_urls.roblox_asset(asset_id_or_url)
 end
 
 function M.ensure(key, asset_id_or_url)
     if keys[key] then return keys[key] end
+    local asset_id = type(asset_id_or_url) == "number" and tostring(asset_id_or_url)
+        or (type(asset_id_or_url) == "string" and asset_id_or_url:match("^(%d+)$"))
+    if asset_id == "0" then return nil end
     local url = url_for(asset_id_or_url)
     if not url then return nil end
-    local asset_id = type(asset_id_or_url) == "number" and asset_id_or_url
-        or (type(asset_id_or_url) == "string" and asset_id_or_url:match("^(%d+)$"))
     keys[key] = {
         url = url,
-        asset_id = asset_id and tostring(asset_id) or nil,
+        asset_id = asset_id,
         handle = nil,
         failed = false,
-        fallback = false,
+        fallback = 0,
     }
     return keys[key]
 end
 
+local FALLBACKS = {
+    function(entry)
+        if not entry.asset_id then return nil end
+        return asset_urls.item_png(entry.asset_id)
+    end,
+    function(entry)
+        if not entry.asset_id then return nil end
+        return asset_urls.decal_url(entry.asset_id)
+    end,
+    function(entry)
+        if not entry.asset_id then return nil end
+        return asset_urls.roblox_thumb(entry.asset_id)
+    end,
+    function(entry)
+        if not entry.asset_id then return nil end
+        return asset_urls.roblox_thumb_legacy(entry.asset_id)
+    end,
+    function(entry)
+        if not entry.asset_id then return nil end
+        return asset_urls.asset_delivery(entry.asset_id)
+    end,
+    function(entry)
+        if not entry.asset_id then return nil end
+        return asset_urls.roblox_asset(entry.asset_id)
+    end,
+}
+
 local function try_fallback(entry)
-    if entry.fallback or not entry.asset_id then return false end
-    local fb = asset_urls.roblox_thumb(entry.asset_id)
-    if not fb or fb == entry.url then return false end
-    entry.fallback = true
+    if not entry.asset_id then return false end
+    entry.fallback = (entry.fallback or 0) + 1
+    local fn = FALLBACKS[entry.fallback]
+    if not fn then return false end
+    local fb = fn(entry)
+    if not fb or fb == entry.url then
+        return try_fallback(entry)
+    end
     entry.url = fb
     entry.handle = nil
     entry.failed = false
@@ -73,6 +110,26 @@ local function draw_image(handle, x, y, w, h, col)
     end
 end
 
+function M.state(key)
+    local entry = keys[key]
+    if not entry then return "none" end
+    if entry.failed then return "failed" end
+    if not entry.handle then return "loading" end
+    if draw and draw.image_failed and draw.image_failed(entry.handle) then
+        if try_fallback(entry) then
+            return "loading"
+        end
+        entry.failed = true
+        entry.handle = nil
+        return "failed"
+    end
+    return "ready"
+end
+
+function M.is_ready(key)
+    return M.state(key) == "ready"
+end
+
 function M.draw_fit(key, x, y, w, h, col)
     if not draw or not draw.image then return false end
     local handle = get_handle(key)
@@ -86,6 +143,13 @@ end
 function M.begin_load(key)
     if not key then return end
     get_handle(key)
+end
+
+function M.preload_asset(asset_id)
+    if not asset_id then return end
+    local key = "item_" .. tostring(asset_id)
+    M.ensure(key, asset_id)
+    M.begin_load(key)
 end
 
 return M

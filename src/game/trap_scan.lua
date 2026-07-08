@@ -83,6 +83,26 @@ local function get_env_interactable_folder()
     return ENV_INTERACTABLE_FOLDER
 end
 
+local function vec3_pos(pos)
+    if not pos then return nil end
+    return {
+        X = pos.X or pos.x or 0,
+        Y = pos.Y or pos.y or 0,
+        Z = pos.Z or pos.z or 0,
+    }
+end
+
+local function add_trap_entry(out, root, model, trap_type, extra)
+    local ok_pos, pos = pcall(function() return root.Position end)
+    out[#out + 1] = {
+        root = root,
+        model = model,
+        trap_type = trap_type,
+        extra = extra,
+        pos = ok_pos and vec3_pos(pos) or nil,
+    }
+end
+
 local function collect_tripmines(container, out, depth)
     if depth > constants.TRAP_SCAN_DEPTH then return end
 
@@ -97,12 +117,7 @@ local function collect_tripmines(container, out, depth)
             local mainPart = child:FindFirstChild("mainPart")
             local connectedPart = child:FindFirstChild("connectedPart")
             if mainPart and mainPart:IsA("BasePart") then
-                out[#out + 1] = {
-                    root = mainPart,
-                    model = child,
-                    trap_type = trap_types.TRAP_TYPES[1],
-                    extra = connectedPart,
-                }
+                add_trap_entry(out, mainPart, child, trap_types.TRAP_TYPES[1], connectedPart)
             end
         elseif child.ClassName == "Folder" then
             collect_tripmines(child, out, depth + 1)
@@ -121,12 +136,7 @@ local function collect_mine_hitboxes(container, out, depth)
 
         local child = children[i]
         if child:IsA("BasePart") and child.Name == "MineHitbox" then
-            out[#out + 1] = {
-                root = child,
-                model = child,
-                trap_type = trap_types.TRAP_TYPES[2],
-                extra = nil,
-            }
+            add_trap_entry(out, child, child, trap_types.TRAP_TYPES[2], nil)
         elseif child.ClassName == "Folder" or child:IsA("BasePart") then
             collect_mine_hitboxes(child, out, depth + 1)
         end
@@ -146,12 +156,7 @@ local function collect_alarms(container, out, depth)
         if child.ClassName == "Model" and child.Name:find("Alarm", 1, true) then
             local root = child:FindFirstChildWhichIsA("BasePart")
             if root then
-                out[#out + 1] = {
-                    root = root,
-                    model = child,
-                    trap_type = trap_types.TRAP_TYPES[3],
-                    extra = nil,
-                }
+                add_trap_entry(out, root, child, trap_types.TRAP_TYPES[3], nil)
             end
         elseif child.ClassName == "Folder" or child.ClassName == "Model" then
             collect_alarms(child, out, depth + 1)
@@ -172,12 +177,7 @@ local function collect_airstrike_alarms(container, out, depth)
         if child.ClassName == "Model" and child.Name:find("AirstrikeAlarm", 1, true) then
             local root = child:FindFirstChildWhichIsA("BasePart")
             if root then
-                out[#out + 1] = {
-                    root = root,
-                    model = child,
-                    trap_type = trap_types.TRAP_TYPES[4],
-                    extra = nil,
-                }
+                add_trap_entry(out, root, child, trap_types.TRAP_TYPES[4], nil)
             end
         elseif child.ClassName == "Folder" or child.ClassName == "Model" then
             collect_airstrike_alarms(child, out, depth + 1)
@@ -199,12 +199,7 @@ local function collect_explosive_barrels(container, out, depth)
             local root = child:FindFirstChild("Base")
             if not root then root = child:FindFirstChildWhichIsA("BasePart") end
             if root then
-                out[#out + 1] = {
-                    root = root,
-                    model = child,
-                    trap_type = trap_types.TRAP_TYPES[5],
-                    extra = nil,
-                }
+                add_trap_entry(out, root, child, trap_types.TRAP_TYPES[5], nil)
             end
         end
     end
@@ -223,12 +218,7 @@ local function collect_sentries(container, out, depth)
         if child.ClassName == "Model" then
             local root = child:FindFirstChild("Base")
             if root and root:IsA("BasePart") then
-                out[#out + 1] = {
-                    root = root,
-                    model = child,
-                    trap_type = trap_types.TRAP_TYPES[6],
-                    extra = nil,
-                }
+                add_trap_entry(out, root, child, trap_types.TRAP_TYPES[6], nil)
             end
         end
     end
@@ -244,14 +234,14 @@ local function collect_toxic_gas(container, out, depth)
         scan_yield.yield()
 
         local child = children[i]
-        if child:IsA("MeshPart") then
-            out[#out + 1] = {
-                root = child,
-                model = child,
-                trap_type = trap_types.TRAP_TYPES[7],
-                extra = nil,
-            }
-        elseif child.ClassName == "Folder" or child.ClassName == "Model" then
+        if child.ClassName == "Model" then
+            local root = child:FindFirstChildWhichIsA("BasePart") or child:FindFirstChildWhichIsA("MeshPart")
+            if root then
+                add_trap_entry(out, root, child, trap_types.TRAP_TYPES[7], nil)
+            end
+        elseif child:IsA("MeshPart") and depth <= 1 then
+            add_trap_entry(out, child, child, trap_types.TRAP_TYPES[7], nil)
+        elseif child.ClassName == "Folder" then
             collect_toxic_gas(child, out, depth + 1)
         end
     end
@@ -321,7 +311,13 @@ function M.refresh_live()
     local n = #trap_cache
     if n == 0 then return end
 
-    local batch = constants.TRAP_LIVE_BATCH or 10
+    local cache = July.require("core.cache")
+    local settings = July.require("core.settings")
+    local refresh_pos = cache.should_refresh_positions(
+        settings.enabled("july_silent_aim") or settings.enabled("havoc_aimbot_enabled")
+    )
+
+    local batch = constants.TRAP_LIVE_BATCH or 16
     local checked = 0
 
     while checked < batch and n > 0 do
@@ -335,6 +331,12 @@ function M.refresh_live()
         else
             if trap.extra and not env.is_valid(trap.extra) then
                 trap.extra = nil
+            end
+            if refresh_pos then
+                local ok_pos, pos = pcall(function() return trap.root.Position end)
+                if ok_pos and pos then
+                    trap.pos = vec3_pos(pos)
+                end
             end
             trap_live_cursor = trap_live_cursor + 1
         end

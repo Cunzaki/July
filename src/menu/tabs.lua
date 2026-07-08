@@ -4,7 +4,6 @@ local menu_defs = July.require("menu.menu_defs")
 local config = July.require("features.utility.config")
 local session = July.require("core.session")
 local esp_scheduler = July.require("core.esp_scheduler")
-local weapon_mods = July.require("features.combat.weapon_mods")
 local aimbot = July.require("features.combat.aimbot")
 local silent_aim = July.require("features.combat.silent_aim")
 local npc_esp = July.require("features.visuals.npc_esp")
@@ -48,12 +47,6 @@ function M.update()
     July.require("core.menu_util").sync_masters()
 
     esp_scheduler.tick(frame_counter)
-
-    if frame_counter % 30 == 1 then
-        weapon_mods.apply()
-    elseif frame_counter % 10 == 1 and settings.enabled("havoc_weapon_mods_enabled") then
-        weapon_mods.warm()
-    end
 
     if settings.enabled("havoc_aimbot_enabled") then
         aimbot_tick_counter = aimbot_tick_counter + 1

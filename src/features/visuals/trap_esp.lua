@@ -8,11 +8,19 @@ local env = July.require("core.env")
 
 local M = {}
 
-local function mag3(a, b)
-    local dx = (a.X or 0) - (b.X or b.x or 0)
-    local dy = (a.Y or 0) - (b.Y or b.y or 0)
-    local dz = (a.Z or 0) - (b.Z or b.z or 0)
-    return math.sqrt(dx * dx + dy * dy + dz * dz)
+local candidates = {}
+
+local function clear_candidates()
+    for i = 1, #candidates do
+        candidates[i] = nil
+    end
+end
+
+local function dist_sq(a, b)
+    local dx = (a.X or a.x or 0) - (b.X or b.x or 0)
+    local dy = (a.Y or a.y or 0) - (b.Y or b.y or 0)
+    local dz = (a.Z or a.z or 0) - (b.Z or b.z or 0)
+    return dx * dx + dy * dy + dz * dz
 end
 
 local function draw_trap_box(trap, color, box_style)
@@ -23,22 +31,8 @@ local function draw_trap_box(trap, color, box_style)
         return
     end
 
-    local ok_pos, pos = pcall(function() return trap.root.Position end)
-    local ok_size, size = pcall(function() return trap.root.Size end)
-    if ok_pos and pos and ok_size and size then
-        local bounds = draw_util.get_entity_bounds_from_parts({ root = pos }, { root = size })
-        if bounds.valid then
-            if box_style == 0 then
-                draw.CornerBox(bounds.x, bounds.y, bounds.w, bounds.h, color)
-            else
-                draw.Rect(bounds.x, bounds.y, bounds.w, bounds.h, color)
-            end
-            return
-        end
-    end
-
-    if ok_pos and pos then
-        local bounds = draw_util.get_entity_bounds_fallback(pos)
+    if trap.pos then
+        local bounds = draw_util.get_entity_bounds_fallback(trap.pos)
         if bounds.valid then
             if box_style == 0 then
                 draw.CornerBox(bounds.x, bounds.y, bounds.w, bounds.h, color)
@@ -65,40 +59,41 @@ function M.render(cam_pos)
     local max_dist = settings.num("havoc_trap_max_distance", 500)
     local text_size = settings.num("havoc_trap_text_size", 13)
     local trap_rgb = settings.bool("havoc_trap_rainbow", false) and color_util.rainbow_color(0.35) or nil
+    local max_dist_sq = max_dist * max_dist
     local budget = constants.ESP_RENDER_BUDGET or 100
-    local candidates = {}
+    local count = 0
+
+    clear_candidates()
 
     for i = 1, #trap_cache do
         local trap = trap_cache[i]
         if not trap.root or not env.is_valid(trap.root) then goto continue end
         if not trap_types.is_enabled(type_vals, trap.trap_type) then goto continue end
+        if not trap.pos then goto continue end
 
-        local ok_pos, pos = pcall(function() return trap.root.Position end)
-        if not ok_pos or not pos then goto continue end
+        local dsq = dist_sq(cam_pos, trap.pos)
+        if dsq > max_dist_sq then goto continue end
 
-        local dist = mag3(cam_pos, pos)
-        if dist > max_dist then goto continue end
-
-        candidates[#candidates + 1] = {
+        count = count + 1
+        candidates[count] = {
             trap = trap,
-            pos = pos,
-            dist = dist,
+            dist_sq = dsq,
         }
 
         ::continue::
     end
 
-    if #candidates == 0 then return end
+    if count == 0 then return end
 
     local draw_list = esp_render.pick_closest(candidates, budget)
 
     for i = 1, #draw_list do
         local entry = draw_list[i]
         local trap = entry.trap
-        local pos = entry.pos
-        local dist = entry.dist
+        local pos = trap.pos
+        local dist = math.sqrt(entry.dist_sq)
 
-        local sx, sy, sok = esp_render.w2s(pos.X, pos.Y, pos.Z)
+        local sx, sy, sok = esp_render.w2s(pos.X or pos.x, pos.Y or pos.y, pos.Z or pos.z)
         if not sok or not esp_render.on_screen(sx, sy) then
             goto continue_draw
         end

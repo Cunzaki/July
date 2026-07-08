@@ -24,7 +24,7 @@ end
 
 function M.available()
     return raycast
-        and raycast.track_silent_target
+        and (raycast.set_silent_target or raycast.track_silent_target)
         and raycast.stop_silent_tracking
 end
 
@@ -58,20 +58,6 @@ function M.get_camera_origin()
             if x then return { x = x, y = y, z = z } end
         end
     end
-
-    local env = July and July.require and July.require("core.env") or nil
-    local ws = env and env.get_workspace and env.get_workspace() or nil
-    if ws then
-        local cam = env.safe_call(function()
-            if ws.FindFirstChild then return ws:FindFirstChild("Camera") end
-            return nil
-        end)
-        if cam and cam.CFrame and cam.CFrame.Position then
-            local pos = cam.CFrame.Position
-            return { x = pos.X, y = pos.Y, z = pos.Z }
-        end
-    end
-
     return nil
 end
 
@@ -89,27 +75,28 @@ end
 
 function M.reset_session()
     hook_ready = false
+    M.disable_hook()
+end
+
+function M.disable_hook()
     M.stop()
+    hook_ready = false
+    if raycast and raycast.disable_silent_hook then
+        pcall(raycast.disable_silent_hook)
+    end
 end
 
 --[[
-    opts:
-      keys = { 0x01, 0x02 }  mouse buttons for track_silent_target
-      always = true          also set_silent_target every frame (always-on silent)
+    Vector API: set_silent_target every frame = always armed for the next engine raycast.
+    track_silent_target only applies while its key is held, so we use set_silent_target as primary.
 ]]
-function M.track(origin, aim_point, opts)
+function M.track(origin, aim_point)
     M._last_ok = false
     if not aim_point then return false end
 
     origin = origin or M.get_camera_origin()
     if not origin then return false end
     if not M.ensure_hook() then return false end
-
-    opts = opts or {}
-    local keys = opts.keys
-    if not keys then
-        keys = { opts.track_key or opts.key or 0x01 }
-    end
 
     local ox, oy, oz = unpack_pos(origin)
     local ax, ay, az = unpack_pos(aim_point)
@@ -141,26 +128,18 @@ function M.track(origin, aim_point, opts)
     M._last_origin = { x = ox, y = oy, z = oz }
     M._last_target = { x = ax, y = ay, z = az }
 
-    local ok = false
-
-    if opts.always and raycast.set_silent_target then
+    if raycast.set_silent_target then
         pcall(raycast.set_silent_target, origin_v, dir)
-        ok = true
     end
 
-    local should_track = opts.shooting == true
-    if should_track then
-        for i = 1, #keys do
-            if raycast.track_silent_target then
-                local tracked = raycast.track_silent_target(origin_v, dir, keys[i]) == true
-                ok = ok or tracked
-            end
-        end
+    if raycast.track_silent_target then
+        pcall(raycast.track_silent_target, origin_v, dir, 0x01)
+        pcall(raycast.track_silent_target, origin_v, dir, 0x02)
     end
 
-    M._last_ok = ok
-    tracking = ok
-    return ok
+    M._last_ok = true
+    tracking = true
+    return true
 end
 
 return M

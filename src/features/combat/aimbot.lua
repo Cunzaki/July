@@ -145,6 +145,7 @@ end
 
 local function aim_at(target, smooth)
     if not target or not target.pos then return false end
+    if not input or not input.move_mouse then return false end
 
     local scx, scy = screen_center()
     local sx, sy = target.sx, target.sy
@@ -154,18 +155,7 @@ local function aim_at(target, smooth)
         if not vis then return false end
     end
 
-    if input and input.move_mouse then
-        return smooth_mouse(sx, sy, scx, scy, smooth)
-    end
-
-    if camera and camera.look_at then
-        return pcall(camera.look_at, target.pos.x, target.pos.y, target.pos.z, smooth) == true
-    end
-    if camera and camera.LookAt then
-        return pcall(camera.LookAt, target.pos.x, target.pos.y, target.pos.z, smooth) == true
-    end
-
-    return false
+    return smooth_mouse(sx, sy, scx, scy, smooth)
 end
 
 local function find_target(cam_pos, scx, scy, fov, bone_idx, max_dist, crosshair_prio, target_players, target_npcs)
@@ -212,6 +202,17 @@ end
 function M.tick()
     if not settings.enabled("havoc_aimbot_enabled") then
         M.reset()
+        return
+    end
+
+    if not input or not input.is_key_down then
+        M.draw_state.active = false
+        return
+    end
+
+    local aiming = input.is_key_down(0x02) or input.is_key_down(0x01)
+    if not aiming then
+        M.draw_state.active = false
         return
     end
 
@@ -266,6 +267,36 @@ function M.tick()
     else
         M.draw_state.active = false
     end
+end
+
+local function aimbot_to_target(hit)
+    if not hit then return nil end
+    if hit.kind == "npc" and hit.ent then
+        return {
+            is_npc = true,
+            inst = hit.ent.model,
+            model = hit.ent.model,
+            humanoid = hit.ent.humanoid,
+            root = hit.ent.root,
+            parts = hit.ent.parts,
+            name = hit.ent.model and hit.ent.model.Name or "NPC",
+            _held_name = hit.ent._held_name,
+        }
+    end
+    if hit.kind == "player" and hit.player then
+        return {
+            is_npc = false,
+            player = hit.player,
+            character = hit.char,
+            name = hit.player.Name or hit.player.name,
+        }
+    end
+    return nil
+end
+
+function M.get_current_target()
+    local hit = locked_ent or current_target
+    return aimbot_to_target(hit)
 end
 
 function M.reset()

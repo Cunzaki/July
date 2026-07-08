@@ -4,6 +4,8 @@ local loot_catalog = July.require("game.loot_catalog")
 local tier_util = July.require("game.tier_util")
 local env = July.require("core.env")
 local havoc_sync = July.require("game.havoc_sync")
+local cache = July.require("core.cache")
+local settings = July.require("core.settings")
 
 local M = {}
 
@@ -12,8 +14,10 @@ local loot_cache = {}
 local loot_cache_stamp = -9998
 local drop_cache_stamp = -9996
 local loot_live_cursor = 1
+local last_compact = -9999
 local buildings_folder = nil
 local objects_folder = nil
+local MAX_PARTS = constants.LOOT_MAX_PARTS or 6
 
 local function vec3(pos)
     if not pos then return nil end
@@ -24,13 +28,24 @@ local function vec3(pos)
     }
 end
 
+local function part_count(part_pos)
+    local n = 0
+    for _ in pairs(part_pos) do
+        n = n + 1
+    end
+    return n
+end
+
 local function collect_model_parts(model, part_pos, part_size, depth)
-    if depth > 4 then return end
+    if depth > 2 or part_count(part_pos) >= MAX_PARTS then return end
+
     local ok, children = pcall(function() return model:GetChildren() end)
     if not ok or not children then return end
 
     for i = 1, #children do
         scan_yield.yield()
+        if part_count(part_pos) >= MAX_PARTS then return end
+
         local child = children[i]
         local cls = child.ClassName
         if cls == "Part" or cls == "MeshPart" then
@@ -173,17 +188,6 @@ local function is_character_ancestor(inst)
     if lp then
         local char = lp.Character or lp.character
         if char and is_descendant_of(inst, char) then return true end
-    end
-
-    if entity and entity.GetPlayers then
-        local ok, players = pcall(function() return entity.GetPlayers() end)
-        if ok and players then
-            for i = 1, #players do
-                local p = players[i]
-                local char = p.Character or p.character
-                if char and is_descendant_of(inst, char) then return true end
-            end
-        end
     end
 
     local cur = inst
@@ -497,17 +501,13 @@ local function get_or_create_drop(model, root, category, display_name)
     end
 
     local ok_pos, pos = pcall(function() return root.Position end)
-    local part_pos, part_size = {}, {}
-    if model.ClassName == "Model" or model.ClassName == "Folder" then
-        collect_model_parts(model, part_pos, part_size, 0)
-    end
 
     entry = {
         model = model,
         root = root,
         pos = ok_pos and vec3(pos) or nil,
-        part_pos = next(part_pos) and part_pos or nil,
-        part_size = next(part_size) and part_size or nil,
+        part_pos = nil,
+        part_size = nil,
         is_open_inst = nil,
         is_locked_inst = nil,
         is_open = nil,
@@ -583,12 +583,7 @@ end
 local function collect_objects_drops_deep(out, seen)
     local folder = get_objects_folder()
     if folder and env.is_valid(folder) then
-        local ok, descendants = pcall(function() return folder:GetDescendants() end)
-        if ok and descendants and #descendants > 0 then
-            collect_drops_from_list(descendants, out, seen)
-        else
-            collect_drops(folder, out, seen, 0)
-        end
+        collect_drops(folder, out, seen, 0)
     end
 
     local grid_folder = get_grid_item_folder()
@@ -613,7 +608,7 @@ local function collect_objects_drops(out, seen)
     collect_objects_drops_deep(out, seen)
 end
 
-local function append_preserved_drops(out)
+local function preserve_drops(out)
     for i = 1, #loot_cache do
         local entry = loot_cache[i]
         if entry.is_drop and env.is_valid(entry.model) and env.is_valid(entry.root) then
@@ -784,7 +779,7 @@ function M.refresh(force)
         collect_body_bags(buildings, out)
     end
 
-    append_preserved_drops(out)
+    preserve_drops(out)
 
     local new_by_model = {}
     for i = 1, #out do
@@ -808,13 +803,60 @@ function M.refresh_drops(force)
     merge_drop_cache(out)
 end
 
+function M.compact_invalid(force)
+    local now = os.clock()
+    local interval = constants.LOOT_COMPACT_INTERVAL or 8.0
+    if not force and (now - last_compact) < interval then return end
+    last_compact = now
+
+    local i, n = 1, #loot_cache
+    while i <= n do
+        local loot = loot_cache[i]
+        if not loot or not env.is_valid(loot.model) or not env.is_valid(loot.root) then
+            if loot and loot.model then
+                loot_by_model[loot.model] = nil
+            end
+            loot_cache[i] = loot_cache[n]
+            loot_cache[n] = nil
+            n = n - 1
+        else
+            i = i + 1
+        end
+    end
+
+    if loot_live_cursor > n then
+        loot_live_cursor = 1
+    end
+end
+
+local function combat_active()
+    return settings.enabled("july_silent_aim")
+        or settings.enabled("havoc_aimbot_enabled")
+end
+
+local function refresh_entry_pos(loot)
+    if loot.is_drop then
+        local root = resolve_drop_root(loot.model) or loot.root
+        if root and env.is_valid(root) then
+            loot.root = root
+        end
+    end
+
+    if loot.root and env.is_valid(loot.root) then
+        local ok_pos, pos = pcall(function() return loot.root.Position end)
+        if ok_pos and pos then
+            loot.pos = vec3(pos)
+        end
+    end
+end
+
 function M.refresh_live()
     local n = #loot_cache
     if n == 0 then return end
 
     if loot_live_cursor > n then loot_live_cursor = 1 end
 
-    local prune_batch = 6
+    local prune_batch = constants.LOOT_PRUNE_BATCH or 24
     local pruned = 0
     while pruned < prune_batch and n > 0 do
         if loot_live_cursor > n then loot_live_cursor = 1 end
@@ -832,20 +874,12 @@ function M.refresh_live()
         pruned = pruned + 1
     end
 
+    local refresh_pos = cache.should_refresh_positions(combat_active())
     local remaining = math.min(constants.LOOT_LIVE_BATCH_SIZE, n)
     while remaining > 0 do
         local loot = loot_cache[loot_live_cursor]
         if loot and env.is_valid(loot.model) and env.is_valid(loot.root) then
-            if loot.is_drop then
-                local root = resolve_drop_root(loot.model) or loot.root
-                if root and env.is_valid(root) then
-                    loot.root = root
-                end
-                local ok_pos, pos = pcall(function() return loot.root.Position end)
-                if ok_pos and pos then
-                    loot.pos = vec3(pos)
-                end
-            elseif loot.is_open_inst and env.is_valid(loot.is_open_inst) then
+            if not loot.is_drop and loot.is_open_inst and env.is_valid(loot.is_open_inst) then
                 local ok, is_open_val = pcall(function()
                     return loot.is_open_inst.Value
                 end)
@@ -861,11 +895,8 @@ function M.refresh_live()
                     end
                 end
             end
-            if not loot.is_drop then
-                local ok_pos, pos = pcall(function() return loot.root.Position end)
-                if ok_pos and pos then
-                    loot.pos = vec3(pos)
-                end
+            if refresh_pos then
+                refresh_entry_pos(loot)
             end
         end
 
@@ -886,6 +917,7 @@ function M.invalidate()
     loot_cache_stamp = -9998
     drop_cache_stamp = -9996
     loot_live_cursor = 1
+    last_compact = -9999
     static_co = nil
     drops_co = nil
 end

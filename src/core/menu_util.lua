@@ -13,7 +13,6 @@ M.G = {
     SILENT = "Silent Aim",
     NPC = "NPC Visuals",
     WORLD = "World Visuals",
-    WEAPON = "Weapon Mods",
     CONFIG = "Config",
 }
 
@@ -22,6 +21,7 @@ M._groups_ready = false
 M._groups = {}
 M._master_children = {}
 M._master_hooked = {}
+M._child_parent = {}
 
 local function settings_mod()
     return July.require("core.settings")
@@ -42,7 +42,7 @@ function M.ensure_groups()
     local rows = {
         { M.G.AIMBOT, M.G.SILENT },
         { M.G.NPC, M.G.WORLD },
-        { M.G.WEAPON, M.G.CONFIG },
+        { M.G.CONFIG },
     }
 
     for _, row in ipairs(rows) do
@@ -98,11 +98,34 @@ local function master_visible(master_id)
     return settings_mod().bool(master_id, false)
 end
 
+local function is_hidden_by_master(id)
+    local cur = id
+    local visited = {}
+    while cur do
+        if visited[cur] then break end
+        visited[cur] = true
+        local parent = M._child_parent[cur]
+        if not parent then break end
+        if not master_visible(parent) then
+            return true
+        end
+        cur = parent
+    end
+    return false
+end
+
+local function child_visible(master_id, enabled)
+    if is_hidden_by_master(master_id) then
+        return false
+    end
+    return master_visible(master_id) and enabled
+end
+
 function M.sync_masters()
     for master_id in pairs(M._master_hooked) do
         local show = master_visible(master_id)
         for _, id in ipairs(M._master_children[master_id] or {}) do
-            set_visible(id, show)
+            set_visible(id, child_visible(master_id, show))
         end
     end
 end
@@ -113,7 +136,6 @@ M.COLOR_DEFAULTS = {
     havoc_aimbot_target_line = { 1.0, 0.3, 0.3, 1.0 },
     july_silent_draw_fov = { 0.55, 0.2, 1.0, 1.0 },
     july_silent_target_line = { 1.0, 0.25, 0.25, 1.0 },
-    july_silent_tp_ray_vis = { 0.95, 0.45, 1.0, 0.9 },
     havoc_npc_box = { 1.0, 1.0, 1.0, 1.0 },
     havoc_npc_box_fill = { 1.0, 1.0, 1.0, 0.35 },
     havoc_npc_name = { 0.92, 0.92, 0.92, 1.0 },
@@ -145,16 +167,21 @@ function M.bind_children(master_id, child_ids)
     if not master_id or not child_ids then return end
     M._master_children[master_id] = add_child_ids(M._master_children[master_id], child_ids)
 
+    for _, id in ipairs(child_ids or {}) do
+        if id then
+            M._child_parent[id] = master_id
+        end
+    end
+
     if M._master_hooked[master_id] then return end
     M._master_hooked[master_id] = true
 
     local function sync(new_val)
-        local show
-        if new_val == nil then
-            show = master_visible(master_id)
-        else
-            show = new_val == true or new_val == 1
+        local enabled = master_visible(master_id)
+        if new_val ~= nil then
+            enabled = enabled and (new_val == true or new_val == 1)
         end
+        local show = child_visible(master_id, enabled)
         for _, id in ipairs(M._master_children[master_id] or {}) do
             set_visible(id, show)
         end

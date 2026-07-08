@@ -26,19 +26,41 @@ function M.w2s(x, y, z)
     return 0, 0, false
 end
 
+--[[ Pick closest N entries without sorting the full candidate list. ]]
 function M.pick_closest(entries, budget)
     budget = budget or #entries
-    if #entries <= budget then
+    local n = #entries
+    if n <= budget then
         return entries
     end
-    table.sort(entries, function(a, b)
-        return a.dist < b.dist
-    end)
-    local out = {}
-    for i = 1, budget do
-        out[i] = entries[i]
+
+    local best = {}
+    local best_key = {}
+    local count = 0
+
+    for i = 1, n do
+        local entry = entries[i]
+        local key = entry.dist_sq or entry.dist or 0
+        if count < budget then
+            count = count + 1
+            best[count] = entry
+            best_key[count] = key
+        else
+            local worst_i, worst_key = 1, best_key[1]
+            for j = 2, count do
+                if best_key[j] > worst_key then
+                    worst_i = j
+                    worst_key = best_key[j]
+                end
+            end
+            if key < worst_key then
+                best[worst_i] = entry
+                best_key[worst_i] = key
+            end
+        end
     end
-    return out
+
+    return best
 end
 
 return M

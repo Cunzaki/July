@@ -2,7 +2,7 @@
 /**
  * Download decal/image assets via Roblox Thumbnails API with rate limiting.
  *
- * Run: npm run extract-dump && npm run download-assets
+ * Run: node scripts/extract-item-catalog.mjs && npm run download-assets
  */
 
 import fs from "fs";
@@ -11,6 +11,7 @@ import { fileURLToPath } from "url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const MANIFEST = path.join(ROOT, "dump/manifest.json");
+const CATALOG = path.join(ROOT, "src/game/havoc_item_catalog.lua");
 const OUT_DIR = path.join(ROOT, "assets/decals");
 
 const THUMB_API = "https://thumbnails.roblox.com/v1/assets";
@@ -25,6 +26,19 @@ const slow = args.includes("--slow");
 
 async function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+function collectCatalogIds() {
+  if (!fs.existsSync(CATALOG)) return [];
+  const src = fs.readFileSync(CATALOG, "utf8");
+  const ids = new Set();
+  for (const match of src.matchAll(/default = "(\d+)"/g)) {
+    if (match[1] && match[1] !== "0") ids.add(match[1]);
+  }
+  for (const match of src.matchAll(/\] = "(\d+)"/g)) {
+    if (match[1] && match[1] !== "0") ids.add(match[1]);
+  }
+  return [...ids];
 }
 
 async function downloadUrl(url, dest) {
@@ -82,14 +96,11 @@ async function resolveThumbnails(ids) {
 }
 
 async function main() {
-  if (!fs.existsSync(MANIFEST)) {
-    console.error("Run: npm run extract-dump first");
-    process.exit(1);
-  }
-
-  const manifest = JSON.parse(fs.readFileSync(MANIFEST, "utf8"));
-  const decalIds = Object.keys(manifest.decals || {});
-  let ids = decalIds.length ? decalIds : (manifest.assetIds || []).slice(0, 200);
+  const manifestIds = fs.existsSync(MANIFEST)
+    ? Object.keys(JSON.parse(fs.readFileSync(MANIFEST, "utf8")).decals || {})
+    : [];
+  const catalogIds = collectCatalogIds();
+  let ids = [...new Set([...manifestIds, ...catalogIds])].filter((id) => id && id !== "0");
 
   fs.mkdirSync(OUT_DIR, { recursive: true });
 

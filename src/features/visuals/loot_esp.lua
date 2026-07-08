@@ -9,6 +9,14 @@ local env = July.require("core.env")
 
 local M = {}
 
+local candidates = {}
+
+local function clear_candidates()
+    for i = 1, #candidates do
+        candidates[i] = nil
+    end
+end
+
 local function loot_passes_filter(filter_idx, is_open_val, is_locked_val, is_drop)
     if is_drop then
         if filter_idx == 1 or filter_idx == 3 or filter_idx == 4 then
@@ -31,37 +39,43 @@ local function dist_sq(a, b)
 end
 
 local function draw_loot_box(loot, color, box_style)
-    if not loot.part_pos or not next(loot.part_pos) then
-        if loot.pos then
+    if box_style == 2 then
+        if loot.root and env.is_valid(loot.root) then
+            draw_util.draw_root_3d_box(loot.root, color)
+        elseif loot.pos then
             local bounds = draw_util.get_entity_bounds_fallback(loot.pos)
+            if bounds.valid then
+                draw.Rect(bounds.x, bounds.y, bounds.w, bounds.h, color)
+            end
+        end
+        return
+    end
+
+    if loot.root and env.is_valid(loot.root) then
+        local ok_pos, pos = pcall(function() return loot.root.Position end)
+        local ok_size, size = pcall(function() return loot.root.Size end)
+        if ok_pos and pos and ok_size and size then
+            local bounds = draw_util.get_entity_bounds_from_parts({ root = pos }, { root = size })
             if bounds.valid then
                 if box_style == 0 then
                     draw.CornerBox(bounds.x, bounds.y, bounds.w, bounds.h, color)
                 else
                     draw.Rect(bounds.x, bounds.y, bounds.w, bounds.h, color)
                 end
+                return
             end
         end
-        return
     end
 
-    if box_style == 2 then
-        if loot.root and env.is_valid(loot.root) then
-            draw_util.draw_root_3d_box(loot.root, color)
-            return
+    if loot.pos then
+        local bounds = draw_util.get_entity_bounds_fallback(loot.pos)
+        if bounds.valid then
+            if box_style == 0 then
+                draw.CornerBox(bounds.x, bounds.y, bounds.w, bounds.h, color)
+            else
+                draw.Rect(bounds.x, bounds.y, bounds.w, bounds.h, color)
+            end
         end
-        if loot.part_pos and next(loot.part_pos) then
-            draw_util.draw_entity_3d_box(loot.part_pos, loot.part_size, color)
-        end
-        return
-    end
-
-    local bounds = draw_util.get_entity_bounds(loot.part_pos, loot.part_size, loot.pos)
-    if not bounds.valid then return end
-    if box_style == 0 then
-        draw.CornerBox(bounds.x, bounds.y, bounds.w, bounds.h, color)
-    else
-        draw.Rect(bounds.x, bounds.y, bounds.w, bounds.h, color)
     end
 end
 
@@ -86,7 +100,9 @@ function M.render(cam_pos)
     local loot_rgb = settings.bool("havoc_loot_rainbow", false) and color_util.rainbow_color(0.3) or nil
     local max_dist_sq = max_dist * max_dist
     local budget = constants.ESP_RENDER_BUDGET or 100
-    local candidates = {}
+    local count = 0
+
+    clear_candidates()
 
     for i = 1, n do
         local loot = loot_cache[i]
@@ -94,23 +110,24 @@ function M.render(cam_pos)
             if loot_passes_filter(filter_idx, loot.is_open, loot.is_locked, loot.is_drop) then
                 local dsq = dist_sq(cam_pos, loot.pos)
                 if dsq <= max_dist_sq and (loot.is_drop or dsq > constants.ESP_HIDE_SQ) then
-                    candidates[#candidates + 1] = {
+                    count = count + 1
+                    candidates[count] = {
                         loot = loot,
-                        dist = math.sqrt(dsq),
+                        dist_sq = dsq,
                     }
                 end
             end
         end
     end
 
-    if #candidates == 0 then return end
+    if count == 0 then return end
 
     local draw_list = esp_render.pick_closest(candidates, budget)
 
     for i = 1, #draw_list do
         local entry = draw_list[i]
         local loot = entry.loot
-        local dist = entry.dist
+        local dist = math.sqrt(entry.dist_sq)
         local px = loot.pos.X or loot.pos.x
         local py = loot.pos.Y or loot.pos.y
         local pz = loot.pos.Z or loot.pos.z

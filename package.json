@@ -6,8 +6,9 @@
     "build": "node scripts/bundle.mjs",
     "extract-dump": "node scripts/extract-dump.mjs",
     "extract-full": "node scripts/extract-full-dump.mjs",
+    "extract-catalog": "node scripts/extract-item-catalog.mjs",
     "download-assets": "node scripts/download-assets.mjs",
     "download-missing": "node scripts/download-assets.mjs --missing-only --slow",
-    "assets": "npm run extract-dump && npm run download-assets"
+    "assets": "npm run extract-catalog && npm run download-assets"
   }
 }

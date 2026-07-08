@@ -1,11 +1,11 @@
 --[[
     July - Havoc for Project Vector
     https://github.com/Cunzaki/July
-    Built: 2026-07-08T06:34:13.460Z
+    Built: 2026-07-08T07:52:06.796Z
 ]]
 
 July = {
-    version = "0.8.4",
+    version = "0.9.4",
     debug = false,
     _mods = {},
     bundled = true,
@@ -48,10 +48,13 @@ M.PLAYER_MATCH_DIST = 5.0
 
 M.LOOT_SCAN_INTERVAL = 30.0
 M.LOOT_SCAN_DEPTH = 8
-M.LOOT_LIVE_BATCH_SIZE = 60
-M.DROP_SCAN_DEPTH = 8
-M.DROP_SCAN_INTERVAL = 1.0
-M.TRAP_LIVE_BATCH = 10
+M.LOOT_LIVE_BATCH_SIZE = 24
+M.LOOT_PRUNE_BATCH = 24
+M.LOOT_COMPACT_INTERVAL = 8.0
+M.LOOT_MAX_PARTS = 6
+M.DROP_SCAN_DEPTH = 4
+M.DROP_SCAN_INTERVAL = 1.5
+M.TRAP_LIVE_BATCH = 16
 
 M.TRAP_SCAN_DEPTH = 8
 M.TRAP_SCAN_INTERVAL = 5.0
@@ -361,6 +364,7 @@ local M = {}
 M._ready = false
 M._last_char_key = nil
 M._last_folder_name = nil
+M._icons_warmed = false
 
 local function char_key(lp)
     if not lp then return nil end
@@ -374,8 +378,10 @@ end
 
 function M.invalidate_all()
     cache.reset()
+    M._icons_warmed = false
 
     July.require("game.havoc_sync").reset()
+    July.require("game.havoc_icons").reset()
     July.require("game.entity_scan").invalidate()
     July.require("game.loot_scan").invalidate()
     July.require("game.trap_scan").invalidate()
@@ -383,11 +389,31 @@ function M.invalidate_all()
     July.require("features.combat.aimbot").reset()
     July.require("features.combat.silent_aim").reset()
     July.require("game.combat_origin").invalidate()
+end
 
-    local gc = July.require("game.gc_weapon_mods")
-    if gc.available() then
-        pcall(gc.warm)
-    end
+local function warm_item_icons()
+    if M._icons_warmed then return end
+    M._icons_warmed = true
+
+    pcall(function()
+        July.require("game.havoc_icons").warm()
+    end)
+
+    pcall(function()
+        local catalog = July.require("game.havoc_item_catalog")
+        local image_cache = July.require("core.image_cache")
+        local by_name = catalog.by_name
+        if not by_name then return end
+        local count = 0
+        for name, entry in pairs(by_name) do
+            local id = catalog.get_asset_id(name)
+            if id then
+                image_cache.preload_asset(id)
+                count = count + 1
+                if count >= 128 then break end
+            end
+        end
+    end)
 end
 
 function M.tick()
@@ -411,6 +437,7 @@ function M.tick()
     if char_key then
         M._ready = true
         M._last_char_key = char_key
+        warm_item_icons()
     end
     if folder_name then
         M._last_folder_name = folder_name
@@ -525,7 +552,6 @@ M.G = {
     SILENT = "Silent Aim",
     NPC = "NPC Visuals",
     WORLD = "World Visuals",
-    WEAPON = "Weapon Mods",
     CONFIG = "Config",
 }
 
@@ -534,6 +560,7 @@ M._groups_ready = false
 M._groups = {}
 M._master_children = {}
 M._master_hooked = {}
+M._child_parent = {}
 
 local function settings_mod()
     return July.require("core.settings")
@@ -554,7 +581,7 @@ function M.ensure_groups()
     local rows = {
         { M.G.AIMBOT, M.G.SILENT },
         { M.G.NPC, M.G.WORLD },
-        { M.G.WEAPON, M.G.CONFIG },
+        { M.G.CONFIG },
     }
 
     for _, row in ipairs(rows) do
@@ -610,11 +637,34 @@ local function master_visible(master_id)
     return settings_mod().bool(master_id, false)
 end
 
+local function is_hidden_by_master(id)
+    local cur = id
+    local visited = {}
+    while cur do
+        if visited[cur] then break end
+        visited[cur] = true
+        local parent = M._child_parent[cur]
+        if not parent then break end
+        if not master_visible(parent) then
+            return true
+        end
+        cur = parent
+    end
+    return false
+end
+
+local function child_visible(master_id, enabled)
+    if is_hidden_by_master(master_id) then
+        return false
+    end
+    return master_visible(master_id) and enabled
+end
+
 function M.sync_masters()
     for master_id in pairs(M._master_hooked) do
         local show = master_visible(master_id)
         for _, id in ipairs(M._master_children[master_id] or {}) do
-            set_visible(id, show)
+            set_visible(id, child_visible(master_id, show))
         end
     end
 end
@@ -625,7 +675,6 @@ M.COLOR_DEFAULTS = {
     havoc_aimbot_target_line = { 1.0, 0.3, 0.3, 1.0 },
     july_silent_draw_fov = { 0.55, 0.2, 1.0, 1.0 },
     july_silent_target_line = { 1.0, 0.25, 0.25, 1.0 },
-    july_silent_tp_ray_vis = { 0.95, 0.45, 1.0, 0.9 },
     havoc_npc_box = { 1.0, 1.0, 1.0, 1.0 },
     havoc_npc_box_fill = { 1.0, 1.0, 1.0, 0.35 },
     havoc_npc_name = { 0.92, 0.92, 0.92, 1.0 },
@@ -657,16 +706,21 @@ function M.bind_children(master_id, child_ids)
     if not master_id or not child_ids then return end
     M._master_children[master_id] = add_child_ids(M._master_children[master_id], child_ids)
 
+    for _, id in ipairs(child_ids or {}) do
+        if id then
+            M._child_parent[id] = master_id
+        end
+    end
+
     if M._master_hooked[master_id] then return end
     M._master_hooked[master_id] = true
 
     local function sync(new_val)
-        local show
-        if new_val == nil then
-            show = master_visible(master_id)
-        else
-            show = new_val == true or new_val == 1
+        local enabled = master_visible(master_id)
+        if new_val ~= nil then
+            enabled = enabled and (new_val == true or new_val == 1)
         end
+        local show = child_visible(master_id, enabled)
         for _, id in ipairs(M._master_children[master_id] or {}) do
             set_visible(id, show)
         end
@@ -1181,6 +1235,67 @@ return M
 
 end)()
 
+-- ── game/asset_urls.lua ──
+July._mods["game.asset_urls"] = (function()
+local M = {}
+
+M.REPO = "Cunzaki/July"
+M.BRANCH = "main"
+M.CDN_BASE = "https://raw.githubusercontent.com/Cunzaki/July/refs/heads/main/assets"
+
+local function digits(id)
+    return id and tostring(id):match("(%d+)")
+end
+
+function M.asset_delivery(asset_id)
+    asset_id = digits(asset_id)
+    if not asset_id then return nil end
+    return string.format("https://assetdelivery.roblox.com/v1/asset?id=%s", asset_id)
+end
+
+function M.roblox_asset(asset_id)
+    asset_id = digits(asset_id)
+    if not asset_id then return nil end
+    return string.format("https://www.roblox.com/asset/?id=%s", asset_id)
+end
+
+function M.roblox_thumb(asset_id)
+    asset_id = digits(asset_id)
+    if not asset_id then return nil end
+    return string.format(
+        "https://www.roblox.com/asset-thumbnail/image?assetId=%s&width=420&height=420&format=png",
+        asset_id
+    )
+end
+
+function M.roblox_thumb_legacy(asset_id)
+    asset_id = digits(asset_id)
+    if not asset_id then return nil end
+    return string.format(
+        "https://www.roblox.com/Thumbs/Asset.ashx?width=420&height=420&assetId=%s",
+        asset_id
+    )
+end
+
+function M.item_png(asset_id)
+    asset_id = digits(asset_id)
+    if not asset_id then return nil end
+    return M.CDN_BASE .. "/items/" .. asset_id .. ".png"
+end
+
+function M.decal_url(asset_id)
+    asset_id = digits(asset_id)
+    if not asset_id then return nil end
+    return string.format(
+        "https://raw.githubusercontent.com/%s/refs/heads/%s/assets/decals/%s.png",
+        M.REPO, M.BRANCH, asset_id
+    )
+end
+
+return M
+
+end)()
+
 -- ── core/image_cache.lua ──
 July._mods["core.image_cache"] = (function()
 local asset_urls = July.require("game.asset_urls")
@@ -1193,30 +1308,67 @@ local function url_for(asset_id_or_url)
     if type(asset_id_or_url) == "string" and asset_id_or_url:find("https://", 1, true) then
         return asset_id_or_url
     end
-    return asset_urls.item_png(asset_id_or_url) or asset_urls.roblox_thumb(asset_id_or_url)
+    return asset_urls.decal_url(asset_id_or_url)
+        or asset_urls.item_png(asset_id_or_url)
+        or asset_urls.roblox_thumb(asset_id_or_url)
+        or asset_urls.roblox_thumb_legacy(asset_id_or_url)
+        or asset_urls.asset_delivery(asset_id_or_url)
+        or asset_urls.roblox_asset(asset_id_or_url)
 end
 
 function M.ensure(key, asset_id_or_url)
     if keys[key] then return keys[key] end
+    local asset_id = type(asset_id_or_url) == "number" and tostring(asset_id_or_url)
+        or (type(asset_id_or_url) == "string" and asset_id_or_url:match("^(%d+)$"))
+    if asset_id == "0" then return nil end
     local url = url_for(asset_id_or_url)
     if not url then return nil end
-    local asset_id = type(asset_id_or_url) == "number" and asset_id_or_url
-        or (type(asset_id_or_url) == "string" and asset_id_or_url:match("^(%d+)$"))
     keys[key] = {
         url = url,
-        asset_id = asset_id and tostring(asset_id) or nil,
+        asset_id = asset_id,
         handle = nil,
         failed = false,
-        fallback = false,
+        fallback = 0,
     }
     return keys[key]
 end
 
+local FALLBACKS = {
+    function(entry)
+        if not entry.asset_id then return nil end
+        return asset_urls.item_png(entry.asset_id)
+    end,
+    function(entry)
+        if not entry.asset_id then return nil end
+        return asset_urls.decal_url(entry.asset_id)
+    end,
+    function(entry)
+        if not entry.asset_id then return nil end
+        return asset_urls.roblox_thumb(entry.asset_id)
+    end,
+    function(entry)
+        if not entry.asset_id then return nil end
+        return asset_urls.roblox_thumb_legacy(entry.asset_id)
+    end,
+    function(entry)
+        if not entry.asset_id then return nil end
+        return asset_urls.asset_delivery(entry.asset_id)
+    end,
+    function(entry)
+        if not entry.asset_id then return nil end
+        return asset_urls.roblox_asset(entry.asset_id)
+    end,
+}
+
 local function try_fallback(entry)
-    if entry.fallback or not entry.asset_id then return false end
-    local fb = asset_urls.roblox_thumb(entry.asset_id)
-    if not fb or fb == entry.url then return false end
-    entry.fallback = true
+    if not entry.asset_id then return false end
+    entry.fallback = (entry.fallback or 0) + 1
+    local fn = FALLBACKS[entry.fallback]
+    if not fn then return false end
+    local fb = fn(entry)
+    if not fb or fb == entry.url then
+        return try_fallback(entry)
+    end
     entry.url = fb
     entry.handle = nil
     entry.failed = false
@@ -1258,6 +1410,26 @@ local function draw_image(handle, x, y, w, h, col)
     end
 end
 
+function M.state(key)
+    local entry = keys[key]
+    if not entry then return "none" end
+    if entry.failed then return "failed" end
+    if not entry.handle then return "loading" end
+    if draw and draw.image_failed and draw.image_failed(entry.handle) then
+        if try_fallback(entry) then
+            return "loading"
+        end
+        entry.failed = true
+        entry.handle = nil
+        return "failed"
+    end
+    return "ready"
+end
+
+function M.is_ready(key)
+    return M.state(key) == "ready"
+end
+
 function M.draw_fit(key, x, y, w, h, col)
     if not draw or not draw.image then return false end
     local handle = get_handle(key)
@@ -1271,6 +1443,13 @@ end
 function M.begin_load(key)
     if not key then return end
     get_handle(key)
+end
+
+function M.preload_asset(asset_id)
+    if not asset_id then return end
+    local key = "item_" .. tostring(asset_id)
+    M.ensure(key, asset_id)
+    M.begin_load(key)
 end
 
 return M
@@ -1436,7 +1615,7 @@ end
 
 function M.available()
     return raycast
-        and raycast.track_silent_target
+        and (raycast.set_silent_target or raycast.track_silent_target)
         and raycast.stop_silent_tracking
 end
 
@@ -1470,20 +1649,6 @@ function M.get_camera_origin()
             if x then return { x = x, y = y, z = z } end
         end
     end
-
-    local env = July and July.require and July.require("core.env") or nil
-    local ws = env and env.get_workspace and env.get_workspace() or nil
-    if ws then
-        local cam = env.safe_call(function()
-            if ws.FindFirstChild then return ws:FindFirstChild("Camera") end
-            return nil
-        end)
-        if cam and cam.CFrame and cam.CFrame.Position then
-            local pos = cam.CFrame.Position
-            return { x = pos.X, y = pos.Y, z = pos.Z }
-        end
-    end
-
     return nil
 end
 
@@ -1501,27 +1666,28 @@ end
 
 function M.reset_session()
     hook_ready = false
+    M.disable_hook()
+end
+
+function M.disable_hook()
     M.stop()
+    hook_ready = false
+    if raycast and raycast.disable_silent_hook then
+        pcall(raycast.disable_silent_hook)
+    end
 end
 
 --[[
-    opts:
-      keys = { 0x01, 0x02 }  mouse buttons for track_silent_target
-      always = true          also set_silent_target every frame (always-on silent)
+    Vector API: set_silent_target every frame = always armed for the next engine raycast.
+    track_silent_target only applies while its key is held, so we use set_silent_target as primary.
 ]]
-function M.track(origin, aim_point, opts)
+function M.track(origin, aim_point)
     M._last_ok = false
     if not aim_point then return false end
 
     origin = origin or M.get_camera_origin()
     if not origin then return false end
     if not M.ensure_hook() then return false end
-
-    opts = opts or {}
-    local keys = opts.keys
-    if not keys then
-        keys = { opts.track_key or opts.key or 0x01 }
-    end
 
     local ox, oy, oz = unpack_pos(origin)
     local ax, ay, az = unpack_pos(aim_point)
@@ -1553,26 +1719,18 @@ function M.track(origin, aim_point, opts)
     M._last_origin = { x = ox, y = oy, z = oz }
     M._last_target = { x = ax, y = ay, z = az }
 
-    local ok = false
-
-    if opts.always and raycast.set_silent_target then
+    if raycast.set_silent_target then
         pcall(raycast.set_silent_target, origin_v, dir)
-        ok = true
     end
 
-    local should_track = opts.shooting == true
-    if should_track then
-        for i = 1, #keys do
-            if raycast.track_silent_target then
-                local tracked = raycast.track_silent_target(origin_v, dir, keys[i]) == true
-                ok = ok or tracked
-            end
-        end
+    if raycast.track_silent_target then
+        pcall(raycast.track_silent_target, origin_v, dir, 0x01)
+        pcall(raycast.track_silent_target, origin_v, dir, 0x02)
     end
 
-    M._last_ok = ok
-    tracking = ok
-    return ok
+    M._last_ok = true
+    tracking = true
+    return true
 end
 
 return M
@@ -1585,7 +1743,7 @@ local M = {}
 
 local DEFAULT_STEPS = 12
 local MIN_RADIUS = 0.1
-local MAX_RADIUS = 5
+local MAX_RADIUS = 8
 local CACHE_MS = 200
 
 local cache = {
@@ -2750,38 +2908,313 @@ return M
 
 end)()
 
--- ── game/asset_urls.lua ──
-July._mods["game.asset_urls"] = (function()
+-- ── game/havoc_item_catalog.lua ──
+July._mods["game.havoc_item_catalog"] = (function()
+-- AUTO-GENERATED by scripts/extract-item-catalog.mjs — do not edit by hand
+-- Source: dump/catalog/instances.jsonl (__tempSTORAGE/weaponsInfo)
+
 local M = {}
 
-M.REPO = "Cunzaki/July"
-M.BRANCH = "main"
-M.CDN_BASE = "https://raw.githubusercontent.com/Cunzaki/April/refs/heads/main/assets"
+M.by_name = {
+    ["311 Double Barrel"] = { default = "17317482404" },
+    ["870 MCS"] = { default = "13383502661" },
+    ["A7 Delta Riot Helmet"] = { default = "14311796917" },
+    ["ACOG TA11D 3.5x35 riflescope"] = { default = "16966178128" },
+    ["AK-74M"] = { default = "14092240677" },
+    ["AKS-74U"] = { default = "14092234359" },
+    ["AS VAL"] = { default = "13397139240" },
+    ["AWP"] = { default = "16741784978" },
+    ["Altyn bulletproof Helmet"] = { default = "14335982397" },
+    ["Altyn helmet face shield"] = { default = "14335982397" },
+    ["Ammunition case"] = { default = "14336102602" },
+    ["Angled foregrip"] = { default = "16966150481" },
+    ["Barbed Wire Bat"] = { default = "13383506728" },
+    ["Bramit 7.62x54R sound suppressor"] = { default = "16966184324" },
+    ["Brassknuckles"] = { default = "13383512604" },
+    ["CMMG Mk47 Mutant"] = { default = "13397150898" },
+    ["Cash"] = { default = "14111058455" },
+    ["Chainsaw"] = { default = "13383506929" },
+    ["Citori 725"] = { default = "17317482404" },
+    ["Colt 4x20 riflescope"] = { default = "16966178128" },
+    ["DC 800 High Cut Combat Helmet"] = { default = "14335982397" },
+    ["DP-27"] = { default = "16741507156" },
+    ["EOTech 553 holographic sight"] = { default = "16966168683" },
+    ["FAST MT Helmet"] = { default = "14335982397" },
+    ["FAST multi-hit ballistic face shield"] = { default = "14335982397" },
+    ["FORT-9 Heavy Assault Rig"] = { default = "14311544550" },
+    ["FORTIS MK.II Gloves"] = { default = "14091842387" },
+    ["Forest Green Ghillie Suit"] = { default = "16486507039" },
+    ["Gemtech SFN-57 5.7x28 sound suppressor"] = { default = "16966184324" },
+    ["Gorynych-S _Sten_ Assault Rig"] = { default = "14311544550" },
+    ["Gzhel-K Body Armor"] = { default = "14336089575" },
+    ["HK MP7 SD 2 4.6x30 sound suppressor"] = { default = "16966205890" },
+    ["HK416"] = { default = "13397150898" },
+    ["HVC Gen4 Body Armor"] = { default = "14311544550" },
+    ["HVC Gen4 Body Armor (HMK)"] = { default = "14311544550" },
+    ["HVC Plate Carrier"] = { default = "14335999308", variants = { ["Black"] = "14335999308", ["Arctic"] = "14335999732", ["Camo"] = "14335999009" } },
+    ["HVC-10T Night Vision Goggles"] = { default = "14361153258" },
+    ["Hand Wraps"] = { default = "14091842387" },
+    ["Improvised plastic sound suppressor"] = { default = "16966205890" },
+    ["Integrated Tactical Plate Carrier"] = { default = "14336089575" },
+    ["Intervention M200"] = { default = "16741784978" },
+    ["KRISS Vector"] = { default = "83091545369834" },
+    ["KS-23M"] = { default = "13397150898" },
+    ["Karambit"] = { default = "14035506091" },
+    ["Katana"] = { default = "13807871344" },
+    ["Korund-VM Body Armor"] = { default = "14336089575" },
+    ["LVPO 10x28 riflescope"] = { default = "16966178128" },
+    ["Leupold Mark 8 8x24 riflescope"] = { default = "16966178128" },
+    ["M16A1"] = { default = "13397150898" },
+    ["M249"] = { default = "13397150898" },
+    ["M4 Benelli"] = { default = "13383502661" },
+    ["M40 Gas Mask Filter"] = { default = "14385718382" },
+    ["M40-1 Gas Mask"] = { default = "14385717978" },
+    ["M40-2 Gas Mask"] = { default = "14385718382" },
+    ["M4A1"] = { default = "13397150898" },
+    ["M79"] = { default = "70609599401481" },
+    ["MAC-10"] = { default = "13786377533" },
+    ["MAC-10 sound suppressor"] = { default = "16966184324" },
+    ["MBC Plate Carrier"] = { default = "14336089575" },
+    ["MOTR Concealable Reinforced Vest"] = { default = "14336089575" },
+    ["MP34"] = { default = "13397150898" },
+    ["MP5A5"] = { default = "83091545369834" },
+    ["MP7"] = { default = "132575782254655" },
+    ["MP9"] = { default = "13786377533" },
+    ["MSA Paraclete Plate Carrier"] = { default = "14336089575" },
+    ["Mask"] = { default = "14336026902" },
+    ["Maska-1SCh Helmet"] = { default = "16303952121" },
+    ["Maska-1SCh _Voin_ Helmet"] = { default = "16303952121" },
+    ["Maska-1SCh _Voin_ face shield"] = { default = "16303952121" },
+    ["Maska-1SCh face shield"] = { default = "16303952121" },
+    ["Military Backpack"] = { default = "17051303168" },
+    ["Military Helmet"] = { default = "14311532304" },
+    ["Mk14 EBR"] = { default = "14092240677" },
+    ["NCStar AQPTLMG Compact Green Laser"] = { default = "16966200213" },
+    ["NovaTec RMR reflex sight"] = { default = "16966191014" },
+    ["NovaTec reflex sight"] = { default = "16966191014" },
+    ["ODWave 556 5.56x45 sound suppressor"] = { default = "16966205890" },
+    ["OKP-7 reflex sight"] = { default = "16966211956" },
+    ["Oil Filter sound suppressor"] = { default = "16966205890" },
+    ["P90"] = { default = "132575782254655" },
+    ["PBS-1 sound suppressor"] = { default = "16966217090" },
+    ["PICO-A1 Light Lower Body Armor"] = { default = "14385093862", variants = { ["Black"] = "14385093862", ["Arctic"] = "14385094274", ["Camo"] = "14385094765" } },
+    ["PICO-A2 Heavy Lower Body Armor"] = { default = "14385118797", variants = { ["Black"] = "14385118797", ["Arctic"] = "14385119129", ["Camo"] = "14385119558" } },
+    ["PSO-1 4x24 scope"] = { default = "16966178128" },
+    ["PU-1 3.5x riflescope"] = { default = "16966178128" },
+    ["PX27 Headlamp"] = { default = "14177171806" },
+    ["Pickaxe"] = { default = "13807871344" },
+    ["Precisive Grips"] = { default = "14091842387" },
+    ["PureFire X300 Ultra"] = { default = "16966221058" },
+    ["QDSS-NT4 5.56x45 sound suppressor"] = { default = "16966205890" },
+    ["RK-1 tactical foregrip"] = { default = "16966238886" },
+    ["ROVER Motorcycle Helmet"] = { default = "14385136221", variants = { ["Black"] = "14385136221", ["White"] = "14385136221", ["Olive"] = "14385136221", ["Blue"] = "14385136221", ["Red"] = "14385136221" } },
+    ["RPG-7"] = { default = "13410069947" },
+    ["S&M Backpack"] = { default = "14336102602" },
+    ["SCAR-H"] = { default = "14116277034" },
+    ["SR16"] = { default = "13397150898" },
+    ["SV-98"] = { default = "16741784978" },
+    ["SV-98 7.62x54R sound suppressor"] = { default = "16966228589" },
+    ["SVD"] = { default = "13397150898" },
+    ["Scuba Gear"] = { default = "17251751666" },
+    ["SilKo Osprey 9 9x19 sound suppressor"] = { default = "16966205890" },
+    ["SilKo Salvo 12 12ga sound suppressor"] = { default = "16966205890" },
+    ["Slick Plate Carrier"] = { default = "14336089575" },
+    ["Sling Bag"] = { default = "14336124360" },
+    ["T-7 Thermal Goggles"] = { default = "14361153258" },
+    ["T178 Raid Backpack"] = { default = "17051303168" },
+    ["Tactical Sword"] = { default = "13807871344" },
+    ["Tagilla's welding mask _Gorilla_"] = { default = "14335982397" },
+    ["Tagilla's welding mask _UBEY_"] = { default = "14335982397" },
+    ["The Crucible"] = { default = "13713117580" },
+    ["Tomahawk"] = { default = "13398455017" },
+    ["Type 04-1 holographic sight"] = { default = "16966168683" },
+    ["UH-1 holographic sight"] = { default = "16966168683" },
+    ["ULACH IIIA Helmet"] = { default = "14311532304" },
+    ["UMP45"] = { default = "83091545369834" },
+    ["VSS Vintorez"] = { default = "13397139240" },
+    ["Vanish 30 5.56x45 sound suppressor"] = { default = "16966234295" },
+    ["Vertical foregrip"] = { default = "16966238886" },
+    ["Weapon case"] = { default = "14336102602" },
+    ["XImprovised plastic sound suppressor"] = { default = "16966205890" },
+    ["Xtreme Motorcycle Helmet"] = { default = "14385147772", variants = { ["Black"] = "14385147772", ["White"] = "14385147772", ["Olive"] = "14385147772", ["Blue"] = "14385147772", ["Red"] = "14385147772" } },
+    ["YMA95-1 3.5x riflescope"] = { default = "16966178128" },
+}
 
-local function digits(id)
-    return id and tostring(id):match("(%d+)")
+function M.get_asset_id(name, variant)
+    if not name or name == "" then return nil end
+    local entry = M.by_name[name]
+    if not entry then return nil end
+    local id
+    if variant and entry.variants and entry.variants[variant] then
+        id = entry.variants[variant]
+    else
+        id = entry.default
+    end
+    if not id or id == "" or id == "0" then return nil end
+    return id
 end
 
-function M.roblox_thumb(asset_id)
-    asset_id = digits(asset_id)
-    if not asset_id then return nil end
-    return string.format(
-        "https://www.roblox.com/Thumbs/Asset.ashx?width=420&height=420&assetId=%s",
-        asset_id
-    )
+return M
+
+end)()
+
+-- ── game/havoc_icons.lua ──
+July._mods["game.havoc_icons"] = (function()
+local havoc_catalog = July.require("game.havoc_item_catalog")
+local env = July.require("core.env")
+
+local M = {}
+
+local runtime_cache = {}
+local weapons_info = nil
+
+local WEAPON_CATEGORIES = {
+    "Primary",
+    "Secondary",
+    "Melee",
+    "Grenades",
+    "Throwable",
+}
+
+local function parse_rbx_asset_id(value)
+    if value == nil then return nil end
+    local text = tostring(value)
+    if text == "" or text == "0" or text == "rbxassetid://0" then return nil end
+    local id = text:match("rbxassetid://(%d+)") or text:match("^(%d+)$")
+    if not id or id == "0" then return nil end
+    return id
 end
 
-function M.item_png(asset_id)
-    asset_id = digits(asset_id)
-    if not asset_id then return nil end
-    return M.CDN_BASE .. "/items/" .. asset_id .. ".png"
+local function read_texture_id(folder)
+    if not folder or not env.is_valid(folder) then return nil end
+    local tex = env.find_child(folder, "textureId")
+    if not tex then return nil end
+    local ok, value = pcall(function() return tex.Value end)
+    if not ok then return nil end
+    return parse_rbx_asset_id(value)
 end
 
-function M.decal_url(asset_id)
-    return string.format(
-        "https://raw.githubusercontent.com/%s/refs/heads/%s/assets/decals/%s.png",
-        M.REPO, M.BRANCH, tostring(asset_id)
-    )
+local function get_weapons_info()
+    if weapons_info and env.is_valid(weapons_info) then
+        return weapons_info
+    end
+
+    weapons_info = nil
+    if not game or not game.ReplicatedStorage then return nil end
+
+    local temp = game.ReplicatedStorage:FindFirstChild("__tempSTORAGE")
+    if not temp then return nil end
+
+    local info = temp:FindFirstChild("weaponsInfo")
+    if info and env.is_valid(info) then
+        weapons_info = info
+        return info
+    end
+
+    return nil
+end
+
+local function lookup_in_folder(folder, name)
+    if not folder or not name or name == "" then return nil end
+    local child = env.safe_call(function()
+        if folder.FindFirstChild then return folder:FindFirstChild(name) end
+        return nil
+    end)
+    if not child then return nil end
+    return read_texture_id(child)
+end
+
+local function lookup_runtime(name, variant)
+    local info = get_weapons_info()
+    if not info then return nil end
+
+    if variant and variant ~= "" then
+        local item_folder = env.safe_call(function()
+            return info:FindFirstChild(name)
+        end)
+        if item_folder then
+            local skins = env.find_child(item_folder, "skins")
+            local skin_folder = skins and env.safe_call(function()
+                return skins:FindFirstChild(variant)
+            end)
+            local skin_id = read_texture_id(skin_folder)
+            if skin_id then return skin_id end
+        end
+    end
+
+    local asset_id = lookup_in_folder(info, name)
+    if asset_id then return asset_id end
+
+    for i = 1, #WEAPON_CATEGORIES do
+        local cat = info:FindFirstChild(WEAPON_CATEGORIES[i])
+        asset_id = lookup_in_folder(cat, name)
+        if asset_id then return asset_id end
+    end
+
+    return nil
+end
+
+function M.lookup(name, variant)
+    if not name or name == "" then return nil end
+
+    local cache_key = name .. "\0" .. (variant or "")
+    local cached = runtime_cache[cache_key]
+    if cached ~= nil then
+        return cached ~= false and cached or nil
+    end
+
+    local asset_id = lookup_runtime(name, variant)
+    if not asset_id then
+        asset_id = havoc_catalog.get_asset_id(name, variant)
+    end
+
+    runtime_cache[cache_key] = asset_id or false
+    if asset_id == "0" then return nil end
+    return asset_id
+end
+
+function M.warm()
+    local info = get_weapons_info()
+    if not info then return 0 end
+
+    local count = 0
+    local ok, children = pcall(function() return info:GetChildren() end)
+    if ok and children then
+        for i = 1, #children do
+            local child = children[i]
+            if child.ClassName == "Folder" then
+                local id = read_texture_id(child)
+                if id then
+                    M.lookup(child.Name)
+                    count = count + 1
+                end
+            end
+        end
+    end
+
+    for i = 1, #WEAPON_CATEGORIES do
+        local cat = info:FindFirstChild(WEAPON_CATEGORIES[i])
+        if cat then
+            local ok2, cat_children = pcall(function() return cat:GetChildren() end)
+            if ok2 and cat_children then
+                for j = 1, #cat_children do
+                    local weapon = cat_children[j]
+                    local id = read_texture_id(weapon)
+                    if id then
+                        M.lookup(weapon.Name)
+                        count = count + 1
+                    end
+                end
+            end
+        end
+    end
+
+    return count
+end
+
+function M.reset()
+    weapons_info = nil
+    runtime_cache = {}
 end
 
 return M
@@ -3153,6 +3586,8 @@ end)()
 
 -- ── game/items.lua ──
 July._mods["game.items"] = (function()
+local havoc_icons = July.require("game.havoc_icons")
+local havoc_catalog = July.require("game.havoc_item_catalog")
 local item_images = July.require("game.item_images")
 local tier_util = July.require("game.tier_util")
 local env = July.require("core.env")
@@ -3178,12 +3613,21 @@ end
 local function texture_asset_from_inst(inst)
     if not inst or not env.is_valid(inst) then return nil end
 
+    local tex_val = env.find_child(inst, "textureId")
+    if tex_val then
+        local ok, value = pcall(function() return tex_val.Value end)
+        if ok and value then
+            local id = tostring(value):match("rbxassetid://(%d+)") or tostring(value):match("^(%d+)$")
+            if id and id ~= "0" then return id end
+        end
+    end
+
     local handle = env.find_child(inst, "Handle")
     if handle then
         local ok, tex = pcall(function() return handle.TextureID end)
         if ok and tex and tex ~= "" then
             local id = tostring(tex):match("(%d+)")
-            if id then return id end
+            if id and id ~= "0" then return id end
         end
     end
 
@@ -3202,19 +3646,32 @@ local function find_named_child(model, name)
     end)
 end
 
-function M.make_piece(name, variant, model)
-    if not name or name == "" then return nil end
+local function resolve_asset_id(name, variant, model)
+    local asset_id = havoc_icons.lookup(name, variant)
+    if asset_id and asset_id ~= "0" then return asset_id end
 
-    local asset_id = item_images.get_asset_id(name, variant)
-    if not asset_id and model then
+    asset_id = havoc_catalog.get_asset_id(name, variant)
+    if asset_id and asset_id ~= "0" then return asset_id end
+
+    asset_id = item_images.get_asset_id(name, variant)
+    if asset_id and asset_id ~= "0" then return asset_id end
+
+    if model then
         local inst = find_named_child(model, name)
         asset_id = texture_asset_from_inst(inst)
+        if asset_id then return asset_id end
     end
+
+    return nil
+end
+
+function M.make_piece(name, variant, model)
+    if not name or name == "" then return nil end
 
     return {
         name = name,
         variant = variant,
-        asset_id = asset_id,
+        asset_id = resolve_asset_id(name, variant, model),
     }
 end
 
@@ -3229,6 +3686,9 @@ end
 
 function M.get_image_asset_id(name, variant, model)
     local piece = M.resolve_item_label(name, model)
+    if piece and piece.variant ~= variant and variant then
+        piece = M.make_piece(piece.name, variant, model)
+    end
     return piece and piece.asset_id or nil
 end
 
@@ -3236,194 +3696,10 @@ function M.is_gear_piece_name(name)
     if not name or name == "" then return false end
     if SKIP_WELD_NAMES[name] then return false end
     if name:sub(1, 1) == "_" then return false end
-    return tier_util.is_known_item(name) or tier_util.is_gun_name(name) or tier_util.is_keycard(name)
-end
-
-return M
-
-end)()
-
--- ── game/target_gear.lua ──
-July._mods["game.target_gear"] = (function()
-local env = July.require("core.env")
-local items = July.require("game.items")
-local tier_util = July.require("game.tier_util")
-local weapons = July.require("game.weapons")
-
-local M = {}
-
-local ATTACHMENT_SLOT_HINTS = {
-    p1 = true, p2 = true, p3 = true, p4 = true,
-    slot1 = true, slot2 = true, slot3 = true,
-    sight = true, muzzle = true, underbarrel = true,
-}
-
-local function is_attachment_slot_name(name)
-    if not name or name == "" then return true end
-    local lower = name:lower()
-    if ATTACHMENT_SLOT_HINTS[lower] then return true end
-    if lower:match("^p%d+$") then return true end
-    if lower:match("^slot%d+$") then return true end
-    return false
-end
-
-local function add_armor(out, seen, piece)
-    if not piece or not piece.name then return end
-    if seen[piece.name] then return end
-    seen[piece.name] = true
-    out.armor[#out.armor + 1] = piece
-end
-
-local function add_attachment(out, seen, label, model)
-    if not label or label == "" or is_attachment_slot_name(label) then return end
-    if seen[label] then return end
-    seen[label] = true
-    local piece = items.resolve_item_label(label, model)
-    if piece then
-        out.attachments[#out.attachments + 1] = piece
+    if tier_util.is_known_item(name) or tier_util.is_gun_name(name) or tier_util.is_keycard(name) then
+        return true
     end
-end
-
-local function scan_attachments_folder(folder, model, out, seen)
-    if not folder or not env.is_valid(folder) then return end
-    local ok, children = pcall(function() return folder:GetChildren() end)
-    if not ok or not children then return end
-    for i = 1, #children do
-        add_attachment(out, seen, children[i].Name, model)
-    end
-end
-
-local function scan_tool_attachments(tool, model, out, seen)
-    if not tool or not env.is_valid(tool) then return end
-
-    local attachments = env.find_child(tool, "Attachments")
-    scan_attachments_folder(attachments, model, out, seen)
-
-    local weapon = env.find_child(tool, "Weapon")
-    if weapon then
-        scan_attachments_folder(env.find_child(weapon, "Attachments"), model, out, seen)
-    end
-
-    local at = env.find_child(tool, "_at")
-    if at then
-        scan_attachments_folder(at, model, out, seen)
-    end
-end
-
-local function find_named_child(model, name)
-    if not model or not name then return nil end
-    return env.safe_call(function()
-        if model.FindFirstChild then
-            local ok, found = pcall(function() return model:FindFirstChild(name, true) end)
-            if ok and found then return found end
-            return model:FindFirstChild(name)
-        end
-        return nil
-    end)
-end
-
-local function resolve_held(model)
-    if not model or not env.is_valid(model) then return nil, nil end
-
-    local ok, children = pcall(function() return model:GetChildren() end)
-    if ok and children then
-        for i = 1, #children do
-            local child = children[i]
-            if child.ClassName == "Tool" then
-                return child.Name, child
-            end
-            if child.ClassName == "Model" and tier_util.is_gun_name(child.Name) then
-                return child.Name, child
-            end
-        end
-    end
-
-    local held = weapons.get_held_tool_name()
-    if held and tier_util.is_gun_name(held) then
-        return held, find_named_child(model, held)
-    end
-
-    return nil, nil
-end
-
-local function scan_weld_objects(model, out, seen)
-    local weld = env.find_child(model, "WeldObjects")
-    if not weld or not env.is_valid(weld) then return end
-
-    local ok, children = pcall(function() return weld:GetChildren() end)
-    if not ok or not children then return end
-
-    for i = 1, #children do
-        local child = children[i]
-        if child.ClassName == "Model" and items.is_gear_piece_name(child.Name) then
-            add_armor(out, seen, items.resolve_item_label(child.Name, model))
-        end
-    end
-end
-
-local function scan_character(model)
-    local out = {
-        held = nil,
-        attachments = {},
-        armor = {},
-    }
-
-    if not model or not env.is_valid(model) then return out end
-
-    local held_name, tool_inst = resolve_held(model)
-    if held_name then
-        out.held = items.resolve_item_label(held_name, model)
-    end
-
-    local att_seen = {}
-    scan_tool_attachments(tool_inst, model, out, att_seen)
-
-    if not tool_inst then
-        local ok, children = pcall(function() return model:GetChildren() end)
-        if ok and children then
-            for i = 1, #children do
-                local child = children[i]
-                if child.ClassName == "Tool" or child.ClassName == "Model" then
-                    scan_tool_attachments(child, model, out, att_seen)
-                end
-            end
-        end
-    end
-
-    local armor_seen = {}
-    scan_weld_objects(model, out, armor_seen)
-
-    return out
-end
-
-function M.scan_npc(ent)
-    if not ent or not ent.model then
-        return { held = nil, attachments = {}, armor = {} }
-    end
-    local out = scan_character(ent.model)
-    local held_name = ent.held_name or ent._held_name
-    if not out.held and held_name and held_name ~= "" then
-        out.held = items.resolve_item_label(held_name, ent.model)
-    end
-    return out
-end
-
-function M.scan_player(player)
-    local model = player and (player.Character or player.character)
-    if not model or not env.is_valid(model) then
-        return { held = nil, attachments = {}, armor = {} }
-    end
-    return scan_character(model)
-end
-
-function M.scan_target(target)
-    if not target then
-        return { held = nil, attachments = {}, armor = {} }
-    end
-    if target.is_npc then
-        return M.scan_npc(target)
-    end
-    return M.scan_player(target.player or target)
+    return havoc_catalog.get_asset_id(name) ~= nil
 end
 
 return M
@@ -3471,6 +3747,360 @@ end
 
 function M.holding_weapon()
     return M.get_held_tool_name() ~= nil
+end
+
+return M
+
+end)()
+
+-- ── game/target_gear.lua ──
+July._mods["game.target_gear"] = (function()
+local env = July.require("core.env")
+local items = July.require("game.items")
+local tier_util = July.require("game.tier_util")
+
+local M = {}
+
+local ATTACHMENT_SLOT_HINTS = {
+    p1 = true, p2 = true, p3 = true, p4 = true,
+    slot1 = true, slot2 = true, slot3 = true,
+    sight = true, muzzle = true, underbarrel = true,
+    foregrip = true, tactical = true,
+}
+
+local function is_attachment_slot_name(name)
+    if not name or name == "" then return true end
+    if name:match("^%d+$") then return true end
+    local lower = name:lower()
+    if ATTACHMENT_SLOT_HINTS[lower] then return true end
+    if lower:match("^p%d+$") then return true end
+    if lower:match("^slot%d+$") then return true end
+    return false
+end
+
+local function resolve_character_model(target)
+    if not target then return nil end
+    if target.is_npc then
+        local model = target.model or target.inst or target.character
+        if model and env.is_valid(model) then return model end
+        return model
+    end
+
+    local p = target.player or target
+    if p then
+        local char = target.character or p.Character or p.character
+        if char and env.is_valid(char) then return char end
+    end
+
+    local model = target.character or target.model or target.inst
+    if model and env.is_valid(model) then return model end
+    return model
+end
+
+local function add_armor(out, seen, piece)
+    if not piece or not piece.name then return end
+    if seen[piece.name] then return end
+    seen[piece.name] = true
+    out.armor[#out.armor + 1] = piece
+end
+
+local function add_attachment(out, seen, label, model)
+    if not label or label == "" or is_attachment_slot_name(label) then return end
+    if seen[label] then return end
+    seen[label] = true
+    local piece = items.resolve_item_label(label, model)
+    if piece then
+        out.attachments[#out.attachments + 1] = piece
+    end
+end
+
+local function scan_attachments_folder(folder, model, out, seen)
+    if not folder or not env.is_valid(folder) then return end
+    local ok, children = pcall(function() return folder:GetChildren() end)
+    if not ok or not children then return end
+    for i = 1, #children do
+        local child = children[i]
+        if child.ClassName == "Folder" or child.ClassName == "Model" then
+            add_attachment(out, seen, child.Name, model)
+        end
+    end
+end
+
+local function scan_mods_folder(mods, model, out, seen)
+    if not mods or not env.is_valid(mods) then return end
+    local ok, slots = pcall(function() return mods:GetChildren() end)
+    if not ok or not slots then return end
+    for i = 1, #slots do
+        local slot = slots[i]
+        if slot.ClassName == "Folder" then
+            local ok2, slot_children = pcall(function() return slot:GetChildren() end)
+            if ok2 and slot_children then
+                for j = 1, #slot_children do
+                    local item = slot_children[j]
+                    if item.ClassName == "Folder" or item.ClassName == "Model" then
+                        add_attachment(out, seen, item.Name, model)
+                    end
+                end
+            end
+        end
+    end
+end
+
+local function scan_tool_attachments(tool, model, out, seen)
+    if not tool or not env.is_valid(tool) then return end
+
+    local data = env.find_child(tool, "_data")
+    if data then
+        scan_mods_folder(env.find_child(data, "mods"), model, out, seen)
+
+        local mag = env.find_child(data, "magAttached")
+        if mag then
+            local ok, value = pcall(function() return mag.Value end)
+            if ok and value and value ~= "" then
+                add_attachment(out, seen, value, model)
+            end
+        end
+    end
+
+    scan_attachments_folder(env.find_child(tool, "Attachments"), model, out, seen)
+
+    local weapon = env.find_child(tool, "Weapon")
+    if weapon then
+        scan_attachments_folder(env.find_child(weapon, "Attachments"), model, out, seen)
+    end
+
+    scan_attachments_folder(env.find_child(tool, "_at"), model, out, seen)
+end
+
+local function resolve_held(model)
+    if not model or not env.is_valid(model) then return nil, nil end
+
+    local ok, children = pcall(function() return model:GetChildren() end)
+    if ok and children then
+        for i = 1, #children do
+            local child = children[i]
+            if child.ClassName == "Tool" then
+                return child.Name, child
+            end
+            if child.ClassName == "Model" and tier_util.is_gun_name(child.Name) then
+                return child.Name, child
+            end
+        end
+    end
+
+    return nil, nil
+end
+
+local function scan_holsters(model, out)
+    if not model or not env.is_valid(model) or out.held then return end
+
+    local holsters = env.find_child(model, "Holsters")
+    local holster_models = holsters and env.find_child(holsters, "Models")
+    if not holster_models then return end
+
+    local ok, children = pcall(function() return holster_models:GetChildren() end)
+    if not ok or not children then return end
+
+    for i = 1, #children do
+        local child = children[i]
+        if child.ClassName == "Model" or child.ClassName == "Tool" then
+            if tier_util.is_gun_name(child.Name) then
+                out.held = items.resolve_item_label(child.Name, child)
+                return
+            end
+        end
+    end
+end
+
+local function get_weld_pool_from_link(model)
+    local link = env.find_child(model, "WeldObjectsLink")
+    if not link or link.ClassName ~= "ObjectValue" then return nil end
+
+    local ok, target = pcall(function() return link.Value end)
+    if not ok or not target or not env.is_valid(target) then return nil end
+
+    if target.ClassName == "Folder" and target.Name:match("^WeldObjects") then
+        return target
+    end
+
+    local nested = env.find_child(target, "WeldObjects")
+    if nested and nested.Name:match("^WeldObjects") then
+        return nested
+    end
+
+    return target
+end
+
+local function pool_matches_character(pool, model)
+    if not pool or not model then return false end
+    local link = env.find_child(pool, "WeldObjectsLink")
+    if not link or link.ClassName ~= "ObjectValue" then return false end
+
+    local ok, value = pcall(function() return link.Value end)
+    if not ok or not value then return false end
+
+    if value == model then return true end
+    local ok2, same = pcall(function() return tostring(value) == tostring(model) end)
+    return ok2 and same
+end
+
+local function find_weld_pool_by_reverse_link(model)
+    local ws = env.get_workspace()
+    if not ws or not model then return nil end
+
+    local roots = {}
+    local direct = ws:FindFirstChild("_weldobjects.temp.others")
+    if direct then roots[#roots + 1] = direct end
+
+    local ignored = ws:FindFirstChild("Ignored")
+    if ignored then
+        local nested = ignored:FindFirstChild("_weldobjects.temp.others")
+        if nested then roots[#roots + 1] = nested end
+    end
+
+    for r = 1, #roots do
+        local root = roots[r]
+        local ok, children = pcall(function() return root:GetChildren() end)
+        if ok and children then
+            for i = 1, #children do
+                local pool = children[i]
+                if pool.ClassName == "Folder" and pool.Name:match("^WeldObjects") then
+                    if pool_matches_character(pool, model) then
+                        return pool
+                    end
+                end
+            end
+        end
+    end
+
+    return nil
+end
+
+local function collect_weld_pools(model)
+    local pools = {}
+    local seen = {}
+
+    local function add_pool(pool)
+        if not pool or not env.is_valid(pool) then return end
+        local key = tostring(pool)
+        if seen[key] then return end
+        seen[key] = true
+        pools[#pools + 1] = pool
+    end
+
+    add_pool(env.find_child(model, "WeldObjects"))
+
+    local linked = get_weld_pool_from_link(model)
+    if linked then
+        add_pool(linked)
+    else
+        add_pool(find_weld_pool_by_reverse_link(model))
+    end
+
+    return pools
+end
+
+local function scan_gear_model(piece_model, out, armor_seen, att_seen)
+    if not piece_model or not env.is_valid(piece_model) then return end
+    if piece_model.ClassName ~= "Model" then return end
+
+    local name = piece_model.Name
+    if name == "Mask" then return end
+
+    if items.is_gear_piece_name(name) then
+        add_armor(out, armor_seen, items.resolve_item_label(name, piece_model))
+    end
+
+    scan_attachments_folder(env.find_child(piece_model, "_at"), piece_model, out, att_seen)
+end
+
+local function scan_weld_folder(weld, out, armor_seen, att_seen)
+    if not weld or not env.is_valid(weld) then return end
+
+    local ok, children = pcall(function() return weld:GetChildren() end)
+    if not ok or not children then return end
+
+    for i = 1, #children do
+        scan_gear_model(children[i], out, armor_seen, att_seen)
+    end
+end
+
+local function scan_weld_objects(model, out, armor_seen, att_seen)
+    local pools = collect_weld_pools(model)
+    for i = 1, #pools do
+        scan_weld_folder(pools[i], out, armor_seen, att_seen)
+    end
+end
+
+local function scan_character(model)
+    local out = {
+        held = nil,
+        attachments = {},
+        armor = {},
+    }
+
+    if not model or not env.is_valid(model) then return out end
+
+    local held_name, tool_inst = resolve_held(model)
+    if held_name then
+        out.held = items.resolve_item_label(held_name, tool_inst or model)
+    end
+
+    local att_seen = {}
+    scan_tool_attachments(tool_inst, model, out, att_seen)
+
+    if not tool_inst then
+        local ok, children = pcall(function() return model:GetChildren() end)
+        if ok and children then
+            for i = 1, #children do
+                local child = children[i]
+                if child.ClassName == "Tool" or (child.ClassName == "Model" and tier_util.is_gun_name(child.Name)) then
+                    scan_tool_attachments(child, model, out, att_seen)
+                end
+            end
+        end
+    end
+
+    if not out.held then
+        scan_holsters(model, out)
+    end
+
+    local armor_seen = {}
+    scan_weld_objects(model, out, armor_seen, att_seen)
+
+    return out
+end
+
+function M.scan_npc(ent)
+    local model = resolve_character_model(ent)
+    if not model then
+        return { held = nil, attachments = {}, armor = {} }
+    end
+
+    local out = scan_character(model)
+    local held_name = ent.held_name or ent._held_name
+    if not out.held and held_name and held_name ~= "" then
+        out.held = items.resolve_item_label(held_name, model)
+    end
+    return out
+end
+
+function M.scan_player(player)
+    local model = resolve_character_model({ player = player, is_npc = false })
+    if not model then
+        return { held = nil, attachments = {}, armor = {} }
+    end
+    return scan_character(model)
+end
+
+function M.scan_target(target)
+    if not target then
+        return { held = nil, attachments = {}, armor = {} }
+    end
+    if target.is_npc then
+        return M.scan_npc(target)
+    end
+    return M.scan_player(target.player or target)
 end
 
 return M
@@ -4182,6 +4812,8 @@ local loot_catalog = July.require("game.loot_catalog")
 local tier_util = July.require("game.tier_util")
 local env = July.require("core.env")
 local havoc_sync = July.require("game.havoc_sync")
+local cache = July.require("core.cache")
+local settings = July.require("core.settings")
 
 local M = {}
 
@@ -4190,8 +4822,10 @@ local loot_cache = {}
 local loot_cache_stamp = -9998
 local drop_cache_stamp = -9996
 local loot_live_cursor = 1
+local last_compact = -9999
 local buildings_folder = nil
 local objects_folder = nil
+local MAX_PARTS = constants.LOOT_MAX_PARTS or 6
 
 local function vec3(pos)
     if not pos then return nil end
@@ -4202,13 +4836,24 @@ local function vec3(pos)
     }
 end
 
+local function part_count(part_pos)
+    local n = 0
+    for _ in pairs(part_pos) do
+        n = n + 1
+    end
+    return n
+end
+
 local function collect_model_parts(model, part_pos, part_size, depth)
-    if depth > 4 then return end
+    if depth > 2 or part_count(part_pos) >= MAX_PARTS then return end
+
     local ok, children = pcall(function() return model:GetChildren() end)
     if not ok or not children then return end
 
     for i = 1, #children do
         scan_yield.yield()
+        if part_count(part_pos) >= MAX_PARTS then return end
+
         local child = children[i]
         local cls = child.ClassName
         if cls == "Part" or cls == "MeshPart" then
@@ -4351,17 +4996,6 @@ local function is_character_ancestor(inst)
     if lp then
         local char = lp.Character or lp.character
         if char and is_descendant_of(inst, char) then return true end
-    end
-
-    if entity and entity.GetPlayers then
-        local ok, players = pcall(function() return entity.GetPlayers() end)
-        if ok and players then
-            for i = 1, #players do
-                local p = players[i]
-                local char = p.Character or p.character
-                if char and is_descendant_of(inst, char) then return true end
-            end
-        end
     end
 
     local cur = inst
@@ -4675,17 +5309,13 @@ local function get_or_create_drop(model, root, category, display_name)
     end
 
     local ok_pos, pos = pcall(function() return root.Position end)
-    local part_pos, part_size = {}, {}
-    if model.ClassName == "Model" or model.ClassName == "Folder" then
-        collect_model_parts(model, part_pos, part_size, 0)
-    end
 
     entry = {
         model = model,
         root = root,
         pos = ok_pos and vec3(pos) or nil,
-        part_pos = next(part_pos) and part_pos or nil,
-        part_size = next(part_size) and part_size or nil,
+        part_pos = nil,
+        part_size = nil,
         is_open_inst = nil,
         is_locked_inst = nil,
         is_open = nil,
@@ -4761,12 +5391,7 @@ end
 local function collect_objects_drops_deep(out, seen)
     local folder = get_objects_folder()
     if folder and env.is_valid(folder) then
-        local ok, descendants = pcall(function() return folder:GetDescendants() end)
-        if ok and descendants and #descendants > 0 then
-            collect_drops_from_list(descendants, out, seen)
-        else
-            collect_drops(folder, out, seen, 0)
-        end
+        collect_drops(folder, out, seen, 0)
     end
 
     local grid_folder = get_grid_item_folder()
@@ -4791,7 +5416,7 @@ local function collect_objects_drops(out, seen)
     collect_objects_drops_deep(out, seen)
 end
 
-local function append_preserved_drops(out)
+local function preserve_drops(out)
     for i = 1, #loot_cache do
         local entry = loot_cache[i]
         if entry.is_drop and env.is_valid(entry.model) and env.is_valid(entry.root) then
@@ -4962,7 +5587,7 @@ function M.refresh(force)
         collect_body_bags(buildings, out)
     end
 
-    append_preserved_drops(out)
+    preserve_drops(out)
 
     local new_by_model = {}
     for i = 1, #out do
@@ -4986,13 +5611,60 @@ function M.refresh_drops(force)
     merge_drop_cache(out)
 end
 
+function M.compact_invalid(force)
+    local now = os.clock()
+    local interval = constants.LOOT_COMPACT_INTERVAL or 8.0
+    if not force and (now - last_compact) < interval then return end
+    last_compact = now
+
+    local i, n = 1, #loot_cache
+    while i <= n do
+        local loot = loot_cache[i]
+        if not loot or not env.is_valid(loot.model) or not env.is_valid(loot.root) then
+            if loot and loot.model then
+                loot_by_model[loot.model] = nil
+            end
+            loot_cache[i] = loot_cache[n]
+            loot_cache[n] = nil
+            n = n - 1
+        else
+            i = i + 1
+        end
+    end
+
+    if loot_live_cursor > n then
+        loot_live_cursor = 1
+    end
+end
+
+local function combat_active()
+    return settings.enabled("july_silent_aim")
+        or settings.enabled("havoc_aimbot_enabled")
+end
+
+local function refresh_entry_pos(loot)
+    if loot.is_drop then
+        local root = resolve_drop_root(loot.model) or loot.root
+        if root and env.is_valid(root) then
+            loot.root = root
+        end
+    end
+
+    if loot.root and env.is_valid(loot.root) then
+        local ok_pos, pos = pcall(function() return loot.root.Position end)
+        if ok_pos and pos then
+            loot.pos = vec3(pos)
+        end
+    end
+end
+
 function M.refresh_live()
     local n = #loot_cache
     if n == 0 then return end
 
     if loot_live_cursor > n then loot_live_cursor = 1 end
 
-    local prune_batch = 6
+    local prune_batch = constants.LOOT_PRUNE_BATCH or 24
     local pruned = 0
     while pruned < prune_batch and n > 0 do
         if loot_live_cursor > n then loot_live_cursor = 1 end
@@ -5010,20 +5682,12 @@ function M.refresh_live()
         pruned = pruned + 1
     end
 
+    local refresh_pos = cache.should_refresh_positions(combat_active())
     local remaining = math.min(constants.LOOT_LIVE_BATCH_SIZE, n)
     while remaining > 0 do
         local loot = loot_cache[loot_live_cursor]
         if loot and env.is_valid(loot.model) and env.is_valid(loot.root) then
-            if loot.is_drop then
-                local root = resolve_drop_root(loot.model) or loot.root
-                if root and env.is_valid(root) then
-                    loot.root = root
-                end
-                local ok_pos, pos = pcall(function() return loot.root.Position end)
-                if ok_pos and pos then
-                    loot.pos = vec3(pos)
-                end
-            elseif loot.is_open_inst and env.is_valid(loot.is_open_inst) then
+            if not loot.is_drop and loot.is_open_inst and env.is_valid(loot.is_open_inst) then
                 local ok, is_open_val = pcall(function()
                     return loot.is_open_inst.Value
                 end)
@@ -5039,11 +5703,8 @@ function M.refresh_live()
                     end
                 end
             end
-            if not loot.is_drop then
-                local ok_pos, pos = pcall(function() return loot.root.Position end)
-                if ok_pos and pos then
-                    loot.pos = vec3(pos)
-                end
+            if refresh_pos then
+                refresh_entry_pos(loot)
             end
         end
 
@@ -5064,6 +5725,7 @@ function M.invalidate()
     loot_cache_stamp = -9998
     drop_cache_stamp = -9996
     loot_live_cursor = 1
+    last_compact = -9999
     static_co = nil
     drops_co = nil
 end
@@ -5189,6 +5851,26 @@ local function get_env_interactable_folder()
     return ENV_INTERACTABLE_FOLDER
 end
 
+local function vec3_pos(pos)
+    if not pos then return nil end
+    return {
+        X = pos.X or pos.x or 0,
+        Y = pos.Y or pos.y or 0,
+        Z = pos.Z or pos.z or 0,
+    }
+end
+
+local function add_trap_entry(out, root, model, trap_type, extra)
+    local ok_pos, pos = pcall(function() return root.Position end)
+    out[#out + 1] = {
+        root = root,
+        model = model,
+        trap_type = trap_type,
+        extra = extra,
+        pos = ok_pos and vec3_pos(pos) or nil,
+    }
+end
+
 local function collect_tripmines(container, out, depth)
     if depth > constants.TRAP_SCAN_DEPTH then return end
 
@@ -5203,12 +5885,7 @@ local function collect_tripmines(container, out, depth)
             local mainPart = child:FindFirstChild("mainPart")
             local connectedPart = child:FindFirstChild("connectedPart")
             if mainPart and mainPart:IsA("BasePart") then
-                out[#out + 1] = {
-                    root = mainPart,
-                    model = child,
-                    trap_type = trap_types.TRAP_TYPES[1],
-                    extra = connectedPart,
-                }
+                add_trap_entry(out, mainPart, child, trap_types.TRAP_TYPES[1], connectedPart)
             end
         elseif child.ClassName == "Folder" then
             collect_tripmines(child, out, depth + 1)
@@ -5227,12 +5904,7 @@ local function collect_mine_hitboxes(container, out, depth)
 
         local child = children[i]
         if child:IsA("BasePart") and child.Name == "MineHitbox" then
-            out[#out + 1] = {
-                root = child,
-                model = child,
-                trap_type = trap_types.TRAP_TYPES[2],
-                extra = nil,
-            }
+            add_trap_entry(out, child, child, trap_types.TRAP_TYPES[2], nil)
         elseif child.ClassName == "Folder" or child:IsA("BasePart") then
             collect_mine_hitboxes(child, out, depth + 1)
         end
@@ -5252,12 +5924,7 @@ local function collect_alarms(container, out, depth)
         if child.ClassName == "Model" and child.Name:find("Alarm", 1, true) then
             local root = child:FindFirstChildWhichIsA("BasePart")
             if root then
-                out[#out + 1] = {
-                    root = root,
-                    model = child,
-                    trap_type = trap_types.TRAP_TYPES[3],
-                    extra = nil,
-                }
+                add_trap_entry(out, root, child, trap_types.TRAP_TYPES[3], nil)
             end
         elseif child.ClassName == "Folder" or child.ClassName == "Model" then
             collect_alarms(child, out, depth + 1)
@@ -5278,12 +5945,7 @@ local function collect_airstrike_alarms(container, out, depth)
         if child.ClassName == "Model" and child.Name:find("AirstrikeAlarm", 1, true) then
             local root = child:FindFirstChildWhichIsA("BasePart")
             if root then
-                out[#out + 1] = {
-                    root = root,
-                    model = child,
-                    trap_type = trap_types.TRAP_TYPES[4],
-                    extra = nil,
-                }
+                add_trap_entry(out, root, child, trap_types.TRAP_TYPES[4], nil)
             end
         elseif child.ClassName == "Folder" or child.ClassName == "Model" then
             collect_airstrike_alarms(child, out, depth + 1)
@@ -5305,12 +5967,7 @@ local function collect_explosive_barrels(container, out, depth)
             local root = child:FindFirstChild("Base")
             if not root then root = child:FindFirstChildWhichIsA("BasePart") end
             if root then
-                out[#out + 1] = {
-                    root = root,
-                    model = child,
-                    trap_type = trap_types.TRAP_TYPES[5],
-                    extra = nil,
-                }
+                add_trap_entry(out, root, child, trap_types.TRAP_TYPES[5], nil)
             end
         end
     end
@@ -5329,12 +5986,7 @@ local function collect_sentries(container, out, depth)
         if child.ClassName == "Model" then
             local root = child:FindFirstChild("Base")
             if root and root:IsA("BasePart") then
-                out[#out + 1] = {
-                    root = root,
-                    model = child,
-                    trap_type = trap_types.TRAP_TYPES[6],
-                    extra = nil,
-                }
+                add_trap_entry(out, root, child, trap_types.TRAP_TYPES[6], nil)
             end
         end
     end
@@ -5350,14 +6002,14 @@ local function collect_toxic_gas(container, out, depth)
         scan_yield.yield()
 
         local child = children[i]
-        if child:IsA("MeshPart") then
-            out[#out + 1] = {
-                root = child,
-                model = child,
-                trap_type = trap_types.TRAP_TYPES[7],
-                extra = nil,
-            }
-        elseif child.ClassName == "Folder" or child.ClassName == "Model" then
+        if child.ClassName == "Model" then
+            local root = child:FindFirstChildWhichIsA("BasePart") or child:FindFirstChildWhichIsA("MeshPart")
+            if root then
+                add_trap_entry(out, root, child, trap_types.TRAP_TYPES[7], nil)
+            end
+        elseif child:IsA("MeshPart") and depth <= 1 then
+            add_trap_entry(out, child, child, trap_types.TRAP_TYPES[7], nil)
+        elseif child.ClassName == "Folder" then
             collect_toxic_gas(child, out, depth + 1)
         end
     end
@@ -5427,7 +6079,13 @@ function M.refresh_live()
     local n = #trap_cache
     if n == 0 then return end
 
-    local batch = constants.TRAP_LIVE_BATCH or 10
+    local cache = July.require("core.cache")
+    local settings = July.require("core.settings")
+    local refresh_pos = cache.should_refresh_positions(
+        settings.enabled("july_silent_aim") or settings.enabled("havoc_aimbot_enabled")
+    )
+
+    local batch = constants.TRAP_LIVE_BATCH or 16
     local checked = 0
 
     while checked < batch and n > 0 do
@@ -5441,6 +6099,12 @@ function M.refresh_live()
         else
             if trap.extra and not env.is_valid(trap.extra) then
                 trap.extra = nil
+            end
+            if refresh_pos then
+                local ok_pos, pos = pcall(function() return trap.root.Position end)
+                if ok_pos and pos then
+                    trap.pos = vec3_pos(pos)
+                end
             end
             trap_live_cursor = trap_live_cursor + 1
         end
@@ -5498,6 +6162,7 @@ local last = {
     drops = 0,
     trap = 0,
     live = 0,
+    compact = 0,
 }
 
 local function now()
@@ -5521,14 +6186,13 @@ end
 function M.tick(frame_counter)
     frame_counter = frame_counter or 0
     local t = now()
-    local fast = combat_active()
     local entity_scan = July.require("game.entity_scan")
     local loot_scan = July.require("game.loot_scan")
     local trap_scan = July.require("game.trap_scan")
     local scan_budget = constants.SCAN_BUDGET_MS or 4
 
     if any_npc_esp() then
-        local entity_iv = fast and 0.5 or constants.ENTITY_SCAN_INTERVAL
+        local entity_iv = combat_active() and 0.5 or constants.ENTITY_SCAN_INTERVAL
         if t - last.entity >= entity_iv then
             last.entity = t
             entity_scan.refresh()
@@ -5540,10 +6204,13 @@ function M.tick(frame_counter)
             last.loot = t
             loot_scan.queue_refresh()
         end
-        local drop_iv = fast and 0.5 or constants.DROP_SCAN_INTERVAL
-        if t - last.drops >= drop_iv then
+        if t - last.drops >= constants.DROP_SCAN_INTERVAL then
             last.drops = t
             loot_scan.queue_refresh_drops()
+        end
+        if t - last.compact >= (constants.LOOT_COMPACT_INTERVAL or 8.0) then
+            last.compact = t
+            loot_scan.compact_invalid(true)
         end
         loot_scan.tick_async(scan_budget)
     end
@@ -5556,7 +6223,8 @@ function M.tick(frame_counter)
         trap_scan.tick_async(scan_budget)
     end
 
-    local live_iv = fast and 0.08 or 0.18
+    local pos_ms = combat_active() and constants.ESP_POS_CACHE_COMBAT_MS or constants.ESP_POS_CACHE_MS
+    local live_iv = (pos_ms or 120) / 1000
     if t - last.live >= live_iv then
         last.live = t
         if any_npc_esp() then
@@ -5577,6 +6245,7 @@ function M.reset()
     last.drops = 0
     last.trap = 0
     last.live = 0
+    last.compact = 0
     cache.reset()
 end
 
@@ -5614,169 +6283,41 @@ function M.w2s(x, y, z)
     return 0, 0, false
 end
 
+--[[ Pick closest N entries without sorting the full candidate list. ]]
 function M.pick_closest(entries, budget)
     budget = budget or #entries
-    if #entries <= budget then
+    local n = #entries
+    if n <= budget then
         return entries
     end
-    table.sort(entries, function(a, b)
-        return a.dist < b.dist
-    end)
-    local out = {}
-    for i = 1, budget do
-        out[i] = entries[i]
-    end
-    return out
-end
 
-return M
-
-end)()
-
--- ── game/gc_weapon_mods.lua ──
-July._mods["game.gc_weapon_mods"] = (function()
---[[ Havoc weapon mods — refreshgc → getgc(keys) → applygc(keys, values)
-     Keys match weapon config tables from dump (M4A1.lua etc.) ]]
-
-local env = July.require("core.env")
-
-local M = {}
-
-M.WEAPON_FIND_KEYS = {
-    "vPunchBase",
-    "hPunchBase",
-    "dPunchBase",
-    "recoilPunch",
-    "minRecoilPower",
-    "maxRecoilPower",
-    "recoilReduce",
-    "spreadReduce",
-    "aimWeight",
-    "unAimWeight",
-    "vel",
-}
-
-M.PATCHES = {
-    havoc_no_recoil = {
-        vPunchBase = 0,
-        hPunchBase = 0,
-        dPunchBase = 0,
-        recoilPunch = 0,
-        minRecoilPower = 0,
-        maxRecoilPower = 0,
-        recoilReduce = 1,
-    },
-    havoc_no_spread = {
-        spreadReduce = 1,
-    },
-    havoc_no_sway = {
-        aimWeight = 0,
-        unAimWeight = 0,
-    },
-    havoc_fast_vel = {
-        vel = 5000,
-    },
-}
-
-M._last_node_count = 0
-
-local function has_api()
-    return type(refreshgc) == "function"
-        and type(getgc) == "function"
-        and type(applygc) == "function"
-end
-
-function M.available()
-    return has_api()
-end
-
-function M.last_node_count()
-    return M._last_node_count
-end
-
-function M.in_game()
-    return env.get_local_player() ~= nil
-end
-
-local function warm_nodes(keys)
+    local best = {}
+    local best_key = {}
     local count = 0
-    local ok, result = pcall(getgc, keys)
-    if ok and type(result) == "number" then
-        count = result
-    end
-    if count <= 0 then
-        ok, result = pcall(getgc, M.WEAPON_FIND_KEYS)
-        if ok and type(result) == "number" then
-            count = result
-        end
-    end
-    return count
-end
 
-local function patch_count(keys, payload)
-    local patched = 0
-
-    local ok, result = pcall(applygc, keys, payload)
-    if ok and type(result) == "number" then
-        patched = result
-    end
-
-    if patched <= 0 then
-        ok, result = pcall(applygc, M.WEAPON_FIND_KEYS, payload)
-        if ok and type(result) == "number" then
-            patched = result
-        end
-    end
-
-    if patched <= 0 then
-        ok, result = pcall(applygc, payload)
-        if ok and type(result) == "number" then
-            patched = result
-        end
-    end
-
-    return patched
-end
-
-function M.warm()
-    if not has_api() or not M.in_game() then
-        M._last_node_count = 0
-        return 0
-    end
-
-    pcall(refreshgc)
-    local count = warm_nodes(M.WEAPON_FIND_KEYS)
-    M._last_node_count = count
-    return count
-end
-
-function M.apply_enabled(enabled_ids)
-    if not has_api() then
-        return false, 0
-    end
-
-    if not M.in_game() then
-        return false, 0
-    end
-
-    pcall(refreshgc)
-    warm_nodes(M.WEAPON_FIND_KEYS)
-
-    local patched = 0
-    for i = 1, #enabled_ids do
-        local patch = M.PATCHES[enabled_ids[i]]
-        if patch then
-            local keys = {}
-            for k in pairs(patch) do
-                keys[#keys + 1] = k
+    for i = 1, n do
+        local entry = entries[i]
+        local key = entry.dist_sq or entry.dist or 0
+        if count < budget then
+            count = count + 1
+            best[count] = entry
+            best_key[count] = key
+        else
+            local worst_i, worst_key = 1, best_key[1]
+            for j = 2, count do
+                if best_key[j] > worst_key then
+                    worst_i = j
+                    worst_key = best_key[j]
+                end
             end
-            table.sort(keys)
-            patched = patched + patch_count(keys, patch)
+            if key < worst_key then
+                best[worst_i] = entry
+                best_key[worst_i] = key
+            end
         end
     end
 
-    M._last_node_count = math.max(M._last_node_count, patched, warm_nodes(M.WEAPON_FIND_KEYS))
-    return patched > 0, patched
+    return best
 end
 
 return M
@@ -5801,8 +6342,6 @@ function M.register_silent_aim(TAB, GROUP, prefix, parent_id)
 
     menu.add_combo(TAB, GROUP, prefix .. "target_type", "Silent Target Type", { "Crosshair", "Distance" }, 0, root)
     menu.add_combo(TAB, GROUP, prefix .. "bone", "Silent Target Hitbox", M.SILENT_BONES, 1, root)
-    menu.add_checkbox(TAB, GROUP, prefix .. "lmb_only", "Silent Active on LMB Only", false, root)
-    menu.add_checkbox(TAB, GROUP, prefix .. "rmb_only", "Silent Active on RMB Only", false, root)
     menu.add_checkbox(TAB, GROUP, prefix .. "filter_health", "Silent Health Check", true, root)
     menu.add_checkbox(TAB, GROUP, prefix .. "filter_visible", "Silent Visible Only", false, root)
     menu.add_checkbox(TAB, GROUP, prefix .. "filter_team", "Silent Team Check", true, root)
@@ -5810,19 +6349,11 @@ function M.register_silent_aim(TAB, GROUP, prefix, parent_id)
     menu.add_checkbox(TAB, GROUP, prefix .. "target_npcs", "Silent Target NPCs", true, root)
     menu.add_checkbox(TAB, GROUP, prefix .. "target_npc_soldiers", "Silent Soldier Targets", true, { parent = prefix .. "target_npcs" })
     menu.add_checkbox(TAB, GROUP, prefix .. "target_npc_bosses", "Silent Boss Targets", true, { parent = prefix .. "target_npcs" })
-    menu.add_slider_int(TAB, GROUP, prefix .. "max_dist", "Silent Max Distance", 50, 2000, 500, root)
+    menu.add_slider_int(TAB, GROUP, prefix .. "max_dist", "Silent Max Distance", 50, 3000, 2000, root)
     menu.add_slider_int(TAB, GROUP, prefix .. "fov", "Silent FOV Radius", 20, 600, 150, root)
     menu.add_checkbox(TAB, GROUP, prefix .. "sticky", "Silent Sticky Target", false, root)
-    menu.add_checkbox(TAB, GROUP, prefix .. "wallbang", "Silent Wallbang", false, root)
-    menu.add_checkbox(TAB, GROUP, prefix .. "bullet_tp", "Silent Bullet TP", false, root)
-    menu.add_combo(TAB, GROUP, prefix .. "tp_ray_mode", "Silent TP Ray Mode",
-        { "Direct", "Snap", "Deep", "Curve", "Arch" }, 0, { parent = prefix .. "bullet_tp" })
-    menu.add_checkbox(TAB, GROUP, prefix .. "tp_ray_vis", "Silent Ray Path", false, {
-        parent = prefix .. "bullet_tp",
-        colorpicker = { 0.95, 0.45, 1.0, 0.9 },
-    })
     menu.add_checkbox(TAB, GROUP, prefix .. "bullet_manip", "Silent Bullet Manip", false, root)
-    menu.add_slider_float(TAB, GROUP, prefix .. "manip_dist", "Silent Manip Distance", 0.1, 5.0, 1.0, "%.1f", { parent = prefix .. "bullet_manip" })
+    menu.add_slider_float(TAB, GROUP, prefix .. "manip_dist", "Silent Manip Distance", 0.1, 8.0, 1.0, "%.1f", { parent = prefix .. "bullet_manip" })
     menu.add_checkbox(TAB, GROUP, prefix .. "manip_status", "Silent Manip Status", false, { parent = prefix .. "bullet_manip" })
     menu.add_checkbox(TAB, GROUP, prefix .. "manip_ring", "Silent Manip Ring", false, { parent = prefix .. "bullet_manip" })
     menu.add_checkbox(TAB, GROUP, prefix .. "manip_peek_vis", "Silent Manip Peek", true, { parent = prefix .. "bullet_manip" })
@@ -5851,7 +6382,6 @@ function M.register_all()
     local G = menu_util.G
     local P_AIM = "havoc_aimbot_enabled"
     local P_SILENT = "july_silent_aim"
-    local P_WEAPON = "havoc_weapon_mods_enabled"
     local P_NPC = "havoc_npc_enabled"
     local P_LOOT = "havoc_loot_enabled"
     local P_TRAP = "havoc_trap_enabled"
@@ -5860,7 +6390,7 @@ function M.register_all()
     menu_util.ensure_groups()
 
     -- Row 1: Aimbot | Silent Aim
-    menu.add_checkbox(TAB, G.AIMBOT, P_AIM, "Enable Aimbot", false, { show_mode = false, key = 2 })
+    menu_util.register_keybind(TAB, G.AIMBOT, P_AIM, "Enable Aimbot", false)
     menu.add_combo(TAB, G.AIMBOT, "havoc_aimbot_bone", "Aimbot Target Bone", combat_menu.SILENT_BONES, 1, { parent = P_AIM })
     menu.add_combo(TAB, G.AIMBOT, "havoc_aimbot_target_type", "Aimbot Priority", { "Crosshair", "Distance" }, 0, { parent = P_AIM })
     menu.add_slider_int(TAB, G.AIMBOT, "havoc_aimbot_fov", "Aimbot FOV Radius", 10, 500, 150, { parent = P_AIM })
@@ -5881,12 +6411,13 @@ function M.register_all()
     menu.add_checkbox(TAB, G.AIMBOT, "havoc_aimbot_rainbow", "Aimbot Rainbow", false, { parent = P_AIM })
 
     menu_util.bind_children(P_AIM, {
+        P_AIM .. "_mode",
         "havoc_aimbot_bone", "havoc_aimbot_target_type", "havoc_aimbot_fov", "havoc_aimbot_max_distance",
         "havoc_aimbot_smooth", "havoc_aimbot_sticky", "havoc_aimbot_target_players", "havoc_aimbot_target_npcs",
         "havoc_aimbot_draw_fov", "havoc_aimbot_fill_fov", "havoc_aimbot_target_line", "havoc_aimbot_rainbow",
     })
 
-    menu.add_checkbox(TAB, G.SILENT, P_SILENT, "Enable Silent Aim", false, { show_mode = false })
+    menu_util.register_keybind(TAB, G.SILENT, P_SILENT, "Enable Silent Aim", false)
     combat_menu.register_silent_aim(TAB, G.SILENT, S, P_SILENT)
     menu.add_checkbox(TAB, G.SILENT, "july_silent_draw_fov", "Silent FOV Circle", false, {
         parent = P_SILENT, colorpicker = { 0.55, 0.2, 1.0, 1.0 },
@@ -5898,16 +6429,15 @@ function M.register_all()
     menu.add_checkbox(TAB, G.SILENT, "july_silent_rainbow", "Silent Rainbow", false, { parent = P_SILENT })
 
     menu_util.bind_children(P_SILENT, {
-        S .. "target_type", S .. "bone", S .. "lmb_only", S .. "rmb_only",
+        P_SILENT .. "_mode",
+        S .. "target_type", S .. "bone",
         S .. "filter_health", S .. "filter_visible", S .. "filter_team",
         S .. "target_players", S .. "target_npcs", S .. "target_npc_soldiers", S .. "target_npc_bosses",
         S .. "max_dist", S .. "fov", S .. "sticky",
-        S .. "wallbang", S .. "bullet_tp", S .. "tp_ray_mode", S .. "tp_ray_vis",
         S .. "bullet_manip", S .. "manip_dist", S .. "manip_status", S .. "manip_ring", S .. "manip_peek_vis",
         "july_silent_draw_fov", "july_silent_fov_style", "july_silent_target_line", "july_silent_rainbow",
     })
     menu_util.bind_children(S .. "target_npcs", { S .. "target_npc_soldiers", S .. "target_npc_bosses" })
-    menu_util.bind_children(S .. "bullet_tp", { S .. "tp_ray_mode", S .. "tp_ray_vis" })
     menu_util.bind_children(S .. "bullet_manip", { S .. "manip_dist", S .. "manip_status", S .. "manip_ring", S .. "manip_peek_vis" })
 
     -- Row 2: NPC Visuals | World Visuals
@@ -6020,17 +6550,6 @@ function M.register_all()
         "havoc_target_gear_fov", "havoc_target_gear_gear_size", "havoc_target_gear_top",
     })
 
-    -- Row 3: Weapon Mods | Config
-    menu_util.register_keybind(TAB, G.WEAPON, P_WEAPON, "Enable Weapon Mods", false)
-    menu.add_checkbox(TAB, G.WEAPON, "havoc_no_recoil", "No Recoil", false, { parent = P_WEAPON })
-    menu.add_checkbox(TAB, G.WEAPON, "havoc_no_spread", "No Spread", false, { parent = P_WEAPON })
-    menu.add_checkbox(TAB, G.WEAPON, "havoc_no_sway", "No Sway", false, { parent = P_WEAPON })
-    menu.add_checkbox(TAB, G.WEAPON, "havoc_fast_vel", "Fast Bullet Velocity", false, { parent = P_WEAPON })
-    menu_util.bind_children(P_WEAPON, {
-        "havoc_no_recoil", "havoc_no_spread", "havoc_no_sway", "havoc_fast_vel",
-        P_WEAPON .. "_mode",
-    })
-
     menu_util.sync_masters()
     menu_util.seed_color_defaults()
 end
@@ -6049,17 +6568,16 @@ local menu_util = July.require("core.menu_util")
 local M = {}
 
 M.CONFIG_IDS = {
-    "havoc_aimbot_enabled",
+    "havoc_aimbot_enabled", "havoc_aimbot_enabled_mode",
     "havoc_aimbot_bone", "havoc_aimbot_target_type",
     "havoc_aimbot_fov", "havoc_aimbot_max_distance", "havoc_aimbot_smooth", "havoc_aimbot_sticky",
     "havoc_aimbot_target_players", "havoc_aimbot_target_npcs",
     "havoc_aimbot_draw_fov", "havoc_aimbot_fill_fov", "havoc_aimbot_target_line", "havoc_aimbot_rainbow",
-    "july_silent_aim", "july_silent_rainbow",
-    "july_silent_target_type", "july_silent_bone", "july_silent_lmb_only", "july_silent_rmb_only",
+    "july_silent_aim", "july_silent_aim_mode", "july_silent_rainbow",
+    "july_silent_target_type", "july_silent_bone",
     "july_silent_filter_health", "july_silent_filter_visible", "july_silent_filter_team",
     "july_silent_target_players", "july_silent_target_npcs", "july_silent_target_npc_soldiers", "july_silent_target_npc_bosses",
     "july_silent_max_dist", "july_silent_fov", "july_silent_sticky",
-    "july_silent_wallbang", "july_silent_bullet_tp", "july_silent_tp_ray_mode", "july_silent_tp_ray_vis",
     "july_silent_bullet_manip", "july_silent_manip_dist", "july_silent_manip_status",
     "july_silent_draw_fov", "july_silent_fov_style", "july_silent_target_line",
     "havoc_npc_enabled", "havoc_npc_enabled_mode",
@@ -6081,13 +6599,11 @@ M.CONFIG_IDS = {
     "havoc_trap_marker", "havoc_trap_rainbow",
     "havoc_trap_max_distance", "havoc_trap_text_size",
     "havoc_target_gear", "havoc_target_gear_fov", "havoc_target_gear_gear_size", "havoc_target_gear_top",
-    "havoc_weapon_mods_enabled", "havoc_weapon_mods_enabled_mode",
-    "havoc_no_recoil", "havoc_no_spread", "havoc_no_sway", "havoc_fast_vel",
 }
 
 M.CONFIG_COLOR_IDS = {
     "havoc_aimbot_draw_fov", "havoc_aimbot_fill_fov", "havoc_aimbot_target_line",
-    "july_silent_draw_fov", "july_silent_target_line", "july_silent_tp_ray_vis",
+    "july_silent_draw_fov", "july_silent_target_line",
     "havoc_loot_box",
     "havoc_trap_box",
     "havoc_npc_box", "havoc_npc_box_fill", "havoc_npc_name", "havoc_npc_distance",
@@ -6215,55 +6731,6 @@ return M
 
 end)()
 
--- ── features/combat/weapon_mods.lua ──
-July._mods["features.combat.weapon_mods"] = (function()
-local settings = July.require("core.settings")
-local gc = July.require("game.gc_weapon_mods")
-
-local M = {}
-
-local MOD_IDS = {
-    "havoc_no_recoil",
-    "havoc_no_spread",
-    "havoc_no_sway",
-    "havoc_fast_vel",
-}
-
-local warm_counter = 0
-
-function M.warm()
-    if not settings.enabled("havoc_weapon_mods_enabled") then
-        return 0
-    end
-    return gc.warm()
-end
-
-function M.apply()
-    if not settings.enabled("havoc_weapon_mods_enabled") then
-        return
-    end
-
-    warm_counter = warm_counter + 1
-    if warm_counter % 4 == 1 then
-        gc.warm()
-    end
-
-    local enabled = {}
-    for i = 1, #MOD_IDS do
-        if settings.bool(MOD_IDS[i], false) then
-            enabled[#enabled + 1] = MOD_IDS[i]
-        end
-    end
-
-    if #enabled > 0 then
-        gc.apply_enabled(enabled)
-    end
-end
-
-return M
-
-end)()
-
 -- ── features/combat/targeting.lua ──
 July._mods["features.combat.targeting"] = (function()
 local settings = July.require("core.settings")
@@ -6322,11 +6789,13 @@ local function npc_from_entity(ent)
     return {
         is_npc = true,
         inst = ent.model,
+        model = ent.model,
         humanoid = ent.humanoid,
         root = ent.root,
         parts = ent.parts,
         name = ent.model.Name,
         kind = get_npc_kind(ent),
+        _held_name = ent._held_name,
     }
 end
 
@@ -6710,7 +7179,7 @@ function M.is_target_valid(target, prefix, cx, cy, fov)
     local bone_label = M.bone_name(prefix)
     local origin = resolve_origin()
     local fov_sq = fov * fov
-    local hit = evaluate_candidate(target, bone_label, cx, cy, fov_sq, origin, prefix, true)
+    local hit = evaluate_candidate(target, bone_label, cx, cy, fov_sq, origin, prefix, false)
     return hit ~= nil
 end
 
@@ -6927,135 +7396,46 @@ end)()
 -- ── features/combat/silent_resolve.lua ──
 July._mods["features.combat.silent_resolve"] = (function()
 local settings = July.require("core.settings")
-local silent_ray = July.require("core.silent_ray")
 local manip_math = July.require("core.manip_math")
 local targeting = July.require("features.combat.targeting")
 local combat_origin = July.require("game.combat_origin")
-local bullet_tp_ray = July.require("features.combat.bullet_tp_ray")
-local weapons = July.require("game.weapons")
-local math_util = July.require("core.math_util")
+local silent_ray = July.require("core.silent_ray")
 
 local M = {}
 
 local OFF_INFO = { state = "off", peek = nil, radius = 1 }
-local PIERCE_PAD = 1.25
 
-local function track_origin()
-    return silent_ray.get_camera_origin() or combat_origin.get_fire_origin()
-end
-
-local function pierce_origin(from, to)
-    if not from or not to then return from end
-    if not raycast or not raycast.cast then return from end
-
-    local fx, fy, fz = from.x, from.y, from.z
-    local tx, ty, tz = to.x, to.y, to.z
-    local dx, dy, dz = tx - fx, ty - fy, tz - fz
-    local len = math.sqrt(dx * dx + dy * dy + dz * dz)
-    if len < 0.001 then return from end
-
-    local hit, _, dist = raycast.cast(fx, fy, fz, tx, ty, tz)
-    if not hit or not dist or dist <= 0.05 then return from end
-    if dist >= len - 1.5 then return from end
-
-    local travel = dist + PIERCE_PAD
-    if travel >= len - 0.5 then
-        travel = len * 0.65
-    end
-
-    local t = travel / len
-    return {
-        x = fx + dx * t,
-        y = fy + dy * t,
-        z = fz + dz * t,
-    }
-end
-
-function M.resolve_track(target, prefix, cx, cy, shooting)
+function M.resolve_track(target, prefix, cx, cy)
     if not target then return nil, nil, OFF_INFO end
 
-    local camera = track_origin()
-    if not camera then return nil, nil, OFF_INFO end
+    local track_origin = combat_origin.get_fire_origin() or silent_ray.get_camera_origin()
+    if not track_origin then return nil, nil, OFF_INFO end
 
-    combat_origin.sync_weapon(weapons.cached_held())
+    local aim = targeting.resolve_bone_world(target, targeting.bone_name(prefix), cx, cy)
+    if not aim then return nil, nil, OFF_INFO end
 
-    local bullet_tp = settings.bool(prefix .. "bullet_tp", false)
-    local bullet_manip = settings.bool(prefix .. "bullet_manip", false)
-    local wallbang = settings.bool(prefix .. "wallbang", false)
-    local weapon = weapons.cached_held()
-
-    local bone_aim = targeting.resolve_bone_world(target, targeting.bone_name(prefix), cx, cy)
-    if not bone_aim then return nil, nil, OFF_INFO end
-
-    local fire_origin = combat_origin.get_fire_origin() or camera
-    if not bullet_tp and not bullet_manip then
-        bone_aim = targeting.predict_point(fire_origin, bone_aim, target, weapon) or bone_aim
-    end
-
-    local track_origin_pos = camera
     local manip_info = OFF_INFO
-    local aim = bone_aim
-    local player_origin = bullet_tp_ray.player_origin()
 
-    if bullet_tp then
-        local mode_name = bullet_tp_ray.mode_name(settings.num(prefix .. "tp_ray_mode", 0))
-        local dist = math_util.distance3(
-            bone_aim.x - player_origin.x,
-            bone_aim.y - player_origin.y,
-            bone_aim.z - player_origin.z
-        )
-
-        if dist > 35 then
-            aim = bullet_tp_ray.predict_aim(target, bone_aim, player_origin, weapon) or bone_aim
-        else
-            aim = bone_aim
-        end
-
-        track_origin_pos = player_origin
-
-        manip_info = {
-            state = "tp",
-            peek = nil,
-            radius = 0,
-            tp_mode = mode_name,
-            tp_path = bullet_tp_ray.build_path(mode_name, player_origin, bone_aim, weapon),
-            bone_aim = bone_aim,
-            player_origin = player_origin,
-        }
-
-        if wallbang then
-            track_origin_pos = pierce_origin(track_origin_pos, aim) or track_origin_pos
-        end
-    elseif bullet_manip then
-        local body = combat_origin.get_head_origin() or combat_origin.get_server_origin()
-        local fire = combat_origin.get_fire_origin()
+    if settings.bool(prefix .. "bullet_manip", false) then
+        local body = targeting.get_server_origin()
         local max_r = manip_math.clamp_radius(settings.num(prefix .. "manip_dist", 1))
 
         if body then
-            local ev = manip_math.evaluate_manipulation(body, bone_aim, {
-                max_radius = max_r,
-                alt_origins = { fire, camera },
-            })
+            local ev = manip_math.evaluate_manipulation(body, aim, { max_radius = max_r })
             manip_info = {
                 state = ev.state,
                 peek = ev.peek,
                 radius = ev.radius or max_r,
             }
             if ev.state == "ready" and ev.peek then
-                track_origin_pos = manip_math.peek_track_origin(ev.peek) or camera
+                track_origin = manip_math.peek_track_origin(ev.peek) or track_origin
             end
         else
             manip_info = { state = "blocked", peek = nil, radius = max_r }
         end
-
-        if wallbang then
-            track_origin_pos = pierce_origin(track_origin_pos, aim) or track_origin_pos
-        end
-    elseif wallbang then
-        track_origin_pos = pierce_origin(track_origin_pos, aim) or track_origin_pos
     end
 
-    return track_origin_pos, aim, manip_info
+    return track_origin, aim, manip_info
 end
 
 return M
@@ -7211,6 +7591,7 @@ end
 
 local function aim_at(target, smooth)
     if not target or not target.pos then return false end
+    if not input or not input.move_mouse then return false end
 
     local scx, scy = screen_center()
     local sx, sy = target.sx, target.sy
@@ -7220,18 +7601,7 @@ local function aim_at(target, smooth)
         if not vis then return false end
     end
 
-    if input and input.move_mouse then
-        return smooth_mouse(sx, sy, scx, scy, smooth)
-    end
-
-    if camera and camera.look_at then
-        return pcall(camera.look_at, target.pos.x, target.pos.y, target.pos.z, smooth) == true
-    end
-    if camera and camera.LookAt then
-        return pcall(camera.LookAt, target.pos.x, target.pos.y, target.pos.z, smooth) == true
-    end
-
-    return false
+    return smooth_mouse(sx, sy, scx, scy, smooth)
 end
 
 local function find_target(cam_pos, scx, scy, fov, bone_idx, max_dist, crosshair_prio, target_players, target_npcs)
@@ -7278,6 +7648,17 @@ end
 function M.tick()
     if not settings.enabled("havoc_aimbot_enabled") then
         M.reset()
+        return
+    end
+
+    if not input or not input.is_key_down then
+        M.draw_state.active = false
+        return
+    end
+
+    local aiming = input.is_key_down(0x02) or input.is_key_down(0x01)
+    if not aiming then
+        M.draw_state.active = false
         return
     end
 
@@ -7334,6 +7715,36 @@ function M.tick()
     end
 end
 
+local function aimbot_to_target(hit)
+    if not hit then return nil end
+    if hit.kind == "npc" and hit.ent then
+        return {
+            is_npc = true,
+            inst = hit.ent.model,
+            model = hit.ent.model,
+            humanoid = hit.ent.humanoid,
+            root = hit.ent.root,
+            parts = hit.ent.parts,
+            name = hit.ent.model and hit.ent.model.Name or "NPC",
+            _held_name = hit.ent._held_name,
+        }
+    end
+    if hit.kind == "player" and hit.player then
+        return {
+            is_npc = false,
+            player = hit.player,
+            character = hit.char,
+            name = hit.player.Name or hit.player.name,
+        }
+    end
+    return nil
+end
+
+function M.get_current_target()
+    local hit = locked_ent or current_target
+    return aimbot_to_target(hit)
+end
+
 function M.reset()
     locked_ent = nil
     current_target = nil
@@ -7360,8 +7771,6 @@ local M = {}
 
 local PREFIX = "july_silent_"
 local P_MASTER = "july_silent_aim"
-local VK_LMB = 0x01
-local VK_RMB = 0x02
 
 local locked_target = nil
 
@@ -7376,37 +7785,7 @@ M.draw_state = {
     ty = 0,
     aim_world = nil,
     manip = { state = "off" },
-    tp_path = nil,
 }
-
-local function key_down(vk)
-    return input and input.is_key_down and input.is_key_down(vk)
-end
-
-local function track_opts()
-    local lmb_only = settings.bool(PREFIX .. "lmb_only", false)
-    local rmb_only = settings.bool(PREFIX .. "rmb_only", false)
-    local lmb = key_down(VK_LMB)
-    local rmb = key_down(VK_RMB)
-
-    if not lmb_only and not rmb_only then
-        return true, {
-            always = true,
-            shooting = lmb or rmb,
-            track_key = VK_LMB,
-        }
-    end
-
-    local keys = {}
-    if lmb_only and lmb then keys[#keys + 1] = VK_LMB end
-    if rmb_only and rmb then keys[#keys + 1] = VK_RMB end
-
-    if #keys == 0 then
-        return false, nil
-    end
-
-    return true, { always = false, shooting = true, keys = keys, track_key = keys[1] }
-end
 
 local function update_target(cx, cy, fov)
     local sticky = settings.bool(PREFIX .. "sticky", false)
@@ -7418,11 +7797,20 @@ local function update_target(cx, cy, fov)
     locked_target = targeting.find_target(cx, cy, fov, PREFIX)
 end
 
-local function update_draw_state()
-    if not settings.enabled(P_MASTER) then
+local function active()
+    return settings.enabled(P_MASTER) and silent_ray.available()
+end
+
+function M.tick()
+    M.draw_state.active = false
+    M.draw_state.manip = { state = "off" }
+    M.draw_state.aim_world = nil
+
+    if not active() then
+        locked_target = nil
+        silent_ray.disable_hook()
         M.draw_state.draw_fov = false
-        M.draw_state.active = false
-        return false
+        return
     end
 
     local cx, cy = targeting.screen_center()
@@ -7431,39 +7819,16 @@ local function update_draw_state()
     M.draw_state.fov = settings.num(PREFIX .. "fov", 150)
     M.draw_state.draw_fov = settings.bool(PREFIX .. "draw_fov", false)
     M.draw_state.fill_fov = settings.num(PREFIX .. "fov_style", 1) == 1
-    return true
-end
-
-function M.tick()
-    M.draw_state.active = false
-    M.draw_state.manip = { state = "off" }
-    M.draw_state.tp_path = nil
-    M.draw_state.aim_world = nil
-
-    if not update_draw_state() then
-        locked_target = nil
-        silent_ray.stop()
-        return
-    end
-
-    if not silent_ray.available() then
-        locked_target = nil
-        silent_ray.stop()
-        return
-    end
-
-    silent_ray.ensure_hook()
 
     if not weapons.holding_weapon() then
         silent_ray.stop()
         return
     end
 
+    silent_ray.ensure_hook()
     combat_origin.sync_weapon(weapons.cached_held())
 
-    local cx, cy = M.draw_state.scx, M.draw_state.scy
     local fov = M.draw_state.fov
-
     update_target(cx, cy, fov)
 
     if not locked_target or not targeting.is_aim_target(locked_target) then
@@ -7471,15 +7836,13 @@ function M.tick()
         return
     end
 
-    local shooting = key_down(VK_LMB) or key_down(VK_RMB)
-    local origin, aim, manip_info = silent_resolve.resolve_track(locked_target, PREFIX, cx, cy, shooting)
+    local origin, aim, manip_info = silent_resolve.resolve_track(locked_target, PREFIX, cx, cy)
     if not aim or not origin then
         silent_ray.stop()
         return
     end
 
     M.draw_state.manip = manip_info or { state = "off" }
-    M.draw_state.tp_path = manip_info and manip_info.tp_path or nil
     M.draw_state.aim_world = aim
 
     local fx, fy, fvis = utility.WorldToScreen(aim.x, aim.y, aim.z)
@@ -7489,24 +7852,19 @@ function M.tick()
         M.draw_state.ty = fy
     end
 
-    local should_track, opts = track_opts()
-    if not should_track or not opts then
-        if not opts or not opts.always then
-            silent_ray.stop()
-        end
-        return
-    end
+    silent_ray.track(origin, aim)
+end
 
-    opts.shooting = opts.shooting or shooting
-    silent_ray.track(origin, aim, opts)
+function M.get_locked_target()
+    return locked_target
 end
 
 function M.reset()
     locked_target = nil
     M.draw_state.scx = nil
     M.draw_state.active = false
+    M.draw_state.draw_fov = false
     M.draw_state.manip = { state = "off" }
-    M.draw_state.tp_path = nil
     silent_ray.stop()
 end
 
@@ -7703,6 +8061,14 @@ local env = July.require("core.env")
 
 local M = {}
 
+local candidates = {}
+
+local function clear_candidates()
+    for i = 1, #candidates do
+        candidates[i] = nil
+    end
+end
+
 local function loot_passes_filter(filter_idx, is_open_val, is_locked_val, is_drop)
     if is_drop then
         if filter_idx == 1 or filter_idx == 3 or filter_idx == 4 then
@@ -7725,37 +8091,43 @@ local function dist_sq(a, b)
 end
 
 local function draw_loot_box(loot, color, box_style)
-    if not loot.part_pos or not next(loot.part_pos) then
-        if loot.pos then
+    if box_style == 2 then
+        if loot.root and env.is_valid(loot.root) then
+            draw_util.draw_root_3d_box(loot.root, color)
+        elseif loot.pos then
             local bounds = draw_util.get_entity_bounds_fallback(loot.pos)
+            if bounds.valid then
+                draw.Rect(bounds.x, bounds.y, bounds.w, bounds.h, color)
+            end
+        end
+        return
+    end
+
+    if loot.root and env.is_valid(loot.root) then
+        local ok_pos, pos = pcall(function() return loot.root.Position end)
+        local ok_size, size = pcall(function() return loot.root.Size end)
+        if ok_pos and pos and ok_size and size then
+            local bounds = draw_util.get_entity_bounds_from_parts({ root = pos }, { root = size })
             if bounds.valid then
                 if box_style == 0 then
                     draw.CornerBox(bounds.x, bounds.y, bounds.w, bounds.h, color)
                 else
                     draw.Rect(bounds.x, bounds.y, bounds.w, bounds.h, color)
                 end
+                return
             end
         end
-        return
     end
 
-    if box_style == 2 then
-        if loot.root and env.is_valid(loot.root) then
-            draw_util.draw_root_3d_box(loot.root, color)
-            return
+    if loot.pos then
+        local bounds = draw_util.get_entity_bounds_fallback(loot.pos)
+        if bounds.valid then
+            if box_style == 0 then
+                draw.CornerBox(bounds.x, bounds.y, bounds.w, bounds.h, color)
+            else
+                draw.Rect(bounds.x, bounds.y, bounds.w, bounds.h, color)
+            end
         end
-        if loot.part_pos and next(loot.part_pos) then
-            draw_util.draw_entity_3d_box(loot.part_pos, loot.part_size, color)
-        end
-        return
-    end
-
-    local bounds = draw_util.get_entity_bounds(loot.part_pos, loot.part_size, loot.pos)
-    if not bounds.valid then return end
-    if box_style == 0 then
-        draw.CornerBox(bounds.x, bounds.y, bounds.w, bounds.h, color)
-    else
-        draw.Rect(bounds.x, bounds.y, bounds.w, bounds.h, color)
     end
 end
 
@@ -7780,7 +8152,9 @@ function M.render(cam_pos)
     local loot_rgb = settings.bool("havoc_loot_rainbow", false) and color_util.rainbow_color(0.3) or nil
     local max_dist_sq = max_dist * max_dist
     local budget = constants.ESP_RENDER_BUDGET or 100
-    local candidates = {}
+    local count = 0
+
+    clear_candidates()
 
     for i = 1, n do
         local loot = loot_cache[i]
@@ -7788,23 +8162,24 @@ function M.render(cam_pos)
             if loot_passes_filter(filter_idx, loot.is_open, loot.is_locked, loot.is_drop) then
                 local dsq = dist_sq(cam_pos, loot.pos)
                 if dsq <= max_dist_sq and (loot.is_drop or dsq > constants.ESP_HIDE_SQ) then
-                    candidates[#candidates + 1] = {
+                    count = count + 1
+                    candidates[count] = {
                         loot = loot,
-                        dist = math.sqrt(dsq),
+                        dist_sq = dsq,
                     }
                 end
             end
         end
     end
 
-    if #candidates == 0 then return end
+    if count == 0 then return end
 
     local draw_list = esp_render.pick_closest(candidates, budget)
 
     for i = 1, #draw_list do
         local entry = draw_list[i]
         local loot = entry.loot
-        local dist = entry.dist
+        local dist = math.sqrt(entry.dist_sq)
         local px = loot.pos.X or loot.pos.x
         local py = loot.pos.Y or loot.pos.y
         local pz = loot.pos.Z or loot.pos.z
@@ -7853,11 +8228,19 @@ local env = July.require("core.env")
 
 local M = {}
 
-local function mag3(a, b)
-    local dx = (a.X or 0) - (b.X or b.x or 0)
-    local dy = (a.Y or 0) - (b.Y or b.y or 0)
-    local dz = (a.Z or 0) - (b.Z or b.z or 0)
-    return math.sqrt(dx * dx + dy * dy + dz * dz)
+local candidates = {}
+
+local function clear_candidates()
+    for i = 1, #candidates do
+        candidates[i] = nil
+    end
+end
+
+local function dist_sq(a, b)
+    local dx = (a.X or a.x or 0) - (b.X or b.x or 0)
+    local dy = (a.Y or a.y or 0) - (b.Y or b.y or 0)
+    local dz = (a.Z or a.z or 0) - (b.Z or b.z or 0)
+    return dx * dx + dy * dy + dz * dz
 end
 
 local function draw_trap_box(trap, color, box_style)
@@ -7868,22 +8251,8 @@ local function draw_trap_box(trap, color, box_style)
         return
     end
 
-    local ok_pos, pos = pcall(function() return trap.root.Position end)
-    local ok_size, size = pcall(function() return trap.root.Size end)
-    if ok_pos and pos and ok_size and size then
-        local bounds = draw_util.get_entity_bounds_from_parts({ root = pos }, { root = size })
-        if bounds.valid then
-            if box_style == 0 then
-                draw.CornerBox(bounds.x, bounds.y, bounds.w, bounds.h, color)
-            else
-                draw.Rect(bounds.x, bounds.y, bounds.w, bounds.h, color)
-            end
-            return
-        end
-    end
-
-    if ok_pos and pos then
-        local bounds = draw_util.get_entity_bounds_fallback(pos)
+    if trap.pos then
+        local bounds = draw_util.get_entity_bounds_fallback(trap.pos)
         if bounds.valid then
             if box_style == 0 then
                 draw.CornerBox(bounds.x, bounds.y, bounds.w, bounds.h, color)
@@ -7910,40 +8279,41 @@ function M.render(cam_pos)
     local max_dist = settings.num("havoc_trap_max_distance", 500)
     local text_size = settings.num("havoc_trap_text_size", 13)
     local trap_rgb = settings.bool("havoc_trap_rainbow", false) and color_util.rainbow_color(0.35) or nil
+    local max_dist_sq = max_dist * max_dist
     local budget = constants.ESP_RENDER_BUDGET or 100
-    local candidates = {}
+    local count = 0
+
+    clear_candidates()
 
     for i = 1, #trap_cache do
         local trap = trap_cache[i]
         if not trap.root or not env.is_valid(trap.root) then goto continue end
         if not trap_types.is_enabled(type_vals, trap.trap_type) then goto continue end
+        if not trap.pos then goto continue end
 
-        local ok_pos, pos = pcall(function() return trap.root.Position end)
-        if not ok_pos or not pos then goto continue end
+        local dsq = dist_sq(cam_pos, trap.pos)
+        if dsq > max_dist_sq then goto continue end
 
-        local dist = mag3(cam_pos, pos)
-        if dist > max_dist then goto continue end
-
-        candidates[#candidates + 1] = {
+        count = count + 1
+        candidates[count] = {
             trap = trap,
-            pos = pos,
-            dist = dist,
+            dist_sq = dsq,
         }
 
         ::continue::
     end
 
-    if #candidates == 0 then return end
+    if count == 0 then return end
 
     local draw_list = esp_render.pick_closest(candidates, budget)
 
     for i = 1, #draw_list do
         local entry = draw_list[i]
         local trap = entry.trap
-        local pos = entry.pos
-        local dist = entry.dist
+        local pos = trap.pos
+        local dist = math.sqrt(entry.dist_sq)
 
-        local sx, sy, sok = esp_render.w2s(pos.X, pos.Y, pos.Z)
+        local sx, sy, sok = esp_render.w2s(pos.X or pos.x, pos.Y or pos.y, pos.Z or pos.z)
         if not sok or not esp_render.on_screen(sx, sy) then
             goto continue_draw
         end
@@ -8032,7 +8402,6 @@ local MANIP_LABELS = {
     direct = "MANIP: CLEAR SHOT",
     ready = "MANIP: RAY READY",
     blocked = "MANIP: NO PEEK",
-    tp = "BULLET TP",
     off = "",
 }
 
@@ -8041,7 +8410,7 @@ local function manip_active(state)
 end
 
 local function manip_ready(state)
-    return state.state == "ready" or state.state == "direct" or state.state == "tp"
+    return state.state == "ready" or state.state == "direct"
 end
 
 function M.render()
@@ -8070,9 +8439,6 @@ function M.render()
 
     if settings.bool(prefix .. "manip_status", false) and manip_active(manip) then
         local label = MANIP_LABELS[manip.state] or "MANIP: ..."
-        if manip.state == "tp" and manip.tp_mode then
-            label = "BULLET TP: " .. manip.tp_mode
-        end
         local col = manip_ready(manip) and { 0.2, 1.0, 0.3, 1.0 } or { 1.0, 0.2, 0.2, 1.0 }
         local tw = draw.GetTextSize(label, 11)
         draw.Text(state.scx - tw * 0.5, state.scy + state.fov + 10, label, col, 11)
@@ -8112,17 +8478,6 @@ function M.render()
             end
         end
     end
-
-    if settings.bool(prefix .. "tp_ray_vis", false) and state.tp_path and #state.tp_path >= 2 then
-        local col = settings.color(prefix .. "tp_ray_vis", { 0.95, 0.45, 1.0, 0.9 })
-        world_vis.draw_world_path(state.tp_path, col, 2)
-        if manip.player_origin and state.aim_world then
-            world_vis.draw_cross(manip.player_origin.x, manip.player_origin.y, manip.player_origin.z, 0.6, col, 2)
-        end
-        if manip.bone_aim then
-            world_vis.draw_cross(manip.bone_aim.x, manip.bone_aim.y, manip.bone_aim.z, 0.45, { 1, 0.85, 0.2, 0.95 }, 2)
-        end
-    end
 end
 
 return M
@@ -8139,6 +8494,8 @@ local items = July.require("game.items")
 local target_gear = July.require("game.target_gear")
 local entity_scan = July.require("game.entity_scan")
 local targeting = July.require("features.combat.targeting")
+local silent_aim = July.require("features.combat.silent_aim")
+local aimbot = July.require("features.combat.aimbot")
 local env = July.require("core.env")
 
 local M = {}
@@ -8229,8 +8586,9 @@ local function npc_target_from_ent(ent)
         model = ent.model,
         humanoid = ent.humanoid,
         root = ent.root,
+        parts = ent.parts,
         name = ent.model and ent.model.Name or "NPC",
-        held_name = ent._held_name,
+        _held_name = ent._held_name,
     }
 end
 
@@ -8265,6 +8623,32 @@ local function target_head_world(target)
     end
 
     return targeting.bone_world(player_target_from_entity(p), "Head")
+end
+
+local function combat_target_allowed(target)
+    if not target or not targeting.is_aim_target(target) then return false end
+    if target.is_npc then
+        return settings.bool(P .. "_target_npcs", true)
+    end
+    return settings.bool(P .. "_target_players", true)
+end
+
+local function get_combat_target()
+    if settings.enabled("july_silent_aim") then
+        local target = silent_aim.get_locked_target()
+        if target and combat_target_allowed(target) then
+            return target
+        end
+    end
+
+    if settings.enabled("havoc_aimbot_enabled") then
+        local target = aimbot.get_current_target()
+        if target and combat_target_allowed(target) then
+            return target
+        end
+    end
+
+    return nil
 end
 
 local function find_crosshair_target(fov_px)
@@ -8447,8 +8831,15 @@ local function draw_slot(x, y, size, key, piece, style)
 
     if not piece then return end
 
-    if key and image_cache.draw_fit(key, x + pad, y + pad, size - pad * 2, size - pad * 2) then
-        return
+    if key then
+        image_cache.begin_load(key)
+        if image_cache.draw_fit(key, x + pad, y + pad, size - pad * 2, size - pad * 2) then
+            return
+        end
+        local state = image_cache.state(key)
+        if state == "loading" or state == "none" then
+            return
+        end
     end
 
     local label = "?"
@@ -8494,7 +8885,10 @@ function M.refresh_target()
 
     local fov = settings.num(P .. "_fov", 150)
     local gear_sz = settings.num(P .. "_gear_size", 48)
-    local target = find_crosshair_target(fov)
+    local target = get_combat_target()
+    if not target then
+        target = find_crosshair_target(fov)
+    end
 
     if not target or not targeting.is_aim_target(target) then
         M._target = nil
@@ -8593,7 +8987,6 @@ local menu_defs = July.require("menu.menu_defs")
 local config = July.require("features.utility.config")
 local session = July.require("core.session")
 local esp_scheduler = July.require("core.esp_scheduler")
-local weapon_mods = July.require("features.combat.weapon_mods")
 local aimbot = July.require("features.combat.aimbot")
 local silent_aim = July.require("features.combat.silent_aim")
 local npc_esp = July.require("features.visuals.npc_esp")
@@ -8637,12 +9030,6 @@ function M.update()
     July.require("core.menu_util").sync_masters()
 
     esp_scheduler.tick(frame_counter)
-
-    if frame_counter % 30 == 1 then
-        weapon_mods.apply()
-    elseif frame_counter % 10 == 1 and settings.enabled("havoc_weapon_mods_enabled") then
-        weapon_mods.warm()
-    end
 
     if settings.enabled("havoc_aimbot_enabled") then
         aimbot_tick_counter = aimbot_tick_counter + 1

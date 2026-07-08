@@ -6,6 +6,7 @@ local M = {}
 M._ready = false
 M._last_char_key = nil
 M._last_folder_name = nil
+M._icons_warmed = false
 
 local function char_key(lp)
     if not lp then return nil end
@@ -19,8 +20,10 @@ end
 
 function M.invalidate_all()
     cache.reset()
+    M._icons_warmed = false
 
     July.require("game.havoc_sync").reset()
+    July.require("game.havoc_icons").reset()
     July.require("game.entity_scan").invalidate()
     July.require("game.loot_scan").invalidate()
     July.require("game.trap_scan").invalidate()
@@ -28,11 +31,31 @@ function M.invalidate_all()
     July.require("features.combat.aimbot").reset()
     July.require("features.combat.silent_aim").reset()
     July.require("game.combat_origin").invalidate()
+end
 
-    local gc = July.require("game.gc_weapon_mods")
-    if gc.available() then
-        pcall(gc.warm)
-    end
+local function warm_item_icons()
+    if M._icons_warmed then return end
+    M._icons_warmed = true
+
+    pcall(function()
+        July.require("game.havoc_icons").warm()
+    end)
+
+    pcall(function()
+        local catalog = July.require("game.havoc_item_catalog")
+        local image_cache = July.require("core.image_cache")
+        local by_name = catalog.by_name
+        if not by_name then return end
+        local count = 0
+        for name, entry in pairs(by_name) do
+            local id = catalog.get_asset_id(name)
+            if id then
+                image_cache.preload_asset(id)
+                count = count + 1
+                if count >= 128 then break end
+            end
+        end
+    end)
 end
 
 function M.tick()
@@ -56,6 +79,7 @@ function M.tick()
     if char_key then
         M._ready = true
         M._last_char_key = char_key
+        warm_item_icons()
     end
     if folder_name then
         M._last_folder_name = folder_name

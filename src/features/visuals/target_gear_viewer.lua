@@ -6,6 +6,8 @@ local items = July.require("game.items")
 local target_gear = July.require("game.target_gear")
 local entity_scan = July.require("game.entity_scan")
 local targeting = July.require("features.combat.targeting")
+local silent_aim = July.require("features.combat.silent_aim")
+local aimbot = July.require("features.combat.aimbot")
 local env = July.require("core.env")
 
 local M = {}
@@ -96,8 +98,9 @@ local function npc_target_from_ent(ent)
         model = ent.model,
         humanoid = ent.humanoid,
         root = ent.root,
+        parts = ent.parts,
         name = ent.model and ent.model.Name or "NPC",
-        held_name = ent._held_name,
+        _held_name = ent._held_name,
     }
 end
 
@@ -132,6 +135,32 @@ local function target_head_world(target)
     end
 
     return targeting.bone_world(player_target_from_entity(p), "Head")
+end
+
+local function combat_target_allowed(target)
+    if not target or not targeting.is_aim_target(target) then return false end
+    if target.is_npc then
+        return settings.bool(P .. "_target_npcs", true)
+    end
+    return settings.bool(P .. "_target_players", true)
+end
+
+local function get_combat_target()
+    if settings.enabled("july_silent_aim") then
+        local target = silent_aim.get_locked_target()
+        if target and combat_target_allowed(target) then
+            return target
+        end
+    end
+
+    if settings.enabled("havoc_aimbot_enabled") then
+        local target = aimbot.get_current_target()
+        if target and combat_target_allowed(target) then
+            return target
+        end
+    end
+
+    return nil
 end
 
 local function find_crosshair_target(fov_px)
@@ -314,8 +343,15 @@ local function draw_slot(x, y, size, key, piece, style)
 
     if not piece then return end
 
-    if key and image_cache.draw_fit(key, x + pad, y + pad, size - pad * 2, size - pad * 2) then
-        return
+    if key then
+        image_cache.begin_load(key)
+        if image_cache.draw_fit(key, x + pad, y + pad, size - pad * 2, size - pad * 2) then
+            return
+        end
+        local state = image_cache.state(key)
+        if state == "loading" or state == "none" then
+            return
+        end
     end
 
     local label = "?"
@@ -361,7 +397,10 @@ function M.refresh_target()
 
     local fov = settings.num(P .. "_fov", 150)
     local gear_sz = settings.num(P .. "_gear_size", 48)
-    local target = find_crosshair_target(fov)
+    local target = get_combat_target()
+    if not target then
+        target = find_crosshair_target(fov)
+    end
 
     if not target or not targeting.is_aim_target(target) then
         M._target = nil
