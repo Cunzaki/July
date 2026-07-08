@@ -2,9 +2,8 @@ local constants = July.require("core.constants")
 local settings = July.require("core.settings")
 local menu_defs = July.require("menu.menu_defs")
 local config = July.require("features.utility.config")
-local entity_scan = July.require("game.entity_scan")
-local loot_scan = July.require("game.loot_scan")
-local trap_scan = July.require("game.trap_scan")
+local session = July.require("core.session")
+local esp_scheduler = July.require("core.esp_scheduler")
 local weapon_mods = July.require("features.combat.weapon_mods")
 local aimbot = July.require("features.combat.aimbot")
 local silent_aim = July.require("features.combat.silent_aim")
@@ -13,6 +12,7 @@ local loot_esp = July.require("features.visuals.loot_esp")
 local trap_esp = July.require("features.visuals.trap_esp")
 local aimbot_visuals = July.require("features.visuals.aimbot_visuals")
 local silent_visuals = July.require("features.visuals.silent_visuals")
+local target_gear_viewer = July.require("features.visuals.target_gear_viewer")
 
 local M = {}
 M._menu_registered = false
@@ -37,24 +37,23 @@ function M.update()
     if not config_loaded then
         config_loaded = true
         config.load()
+        July.require("core.menu_util").sync_masters()
     end
 
     frame_counter = frame_counter + 1
     npc_esp.set_frame_counter(frame_counter)
 
-    if frame_counter % 3 == 1 then entity_scan.refresh() end
-    if frame_counter % 15 == 1 then loot_scan.refresh() end
-    if frame_counter % 8 == 1 then loot_scan.refresh_live() end
-    if frame_counter % 20 == 1 then trap_scan.refresh() end
-    if frame_counter % 30 == 1 then weapon_mods.apply() end
+    session.tick()
+    July.require("core.feature_bind").tick()
+    July.require("core.menu_util").sync_masters()
 
-    local cam_pos = camera.GetPosition()
+    esp_scheduler.tick(frame_counter)
 
-    npc_esp.render(cam_pos)
-    loot_esp.render(cam_pos)
-    trap_esp.render(cam_pos)
-    aimbot_visuals.render()
-    silent_visuals.render()
+    if frame_counter % 30 == 1 then
+        weapon_mods.apply()
+    elseif frame_counter % 10 == 1 and settings.enabled("havoc_weapon_mods_enabled") then
+        weapon_mods.warm()
+    end
 
     if settings.enabled("havoc_aimbot_enabled") then
         aimbot_tick_counter = aimbot_tick_counter + 1
@@ -62,12 +61,32 @@ function M.update()
             aimbot_tick_counter = 0
             aimbot.tick()
         end
-        silent_aim.tick()
     else
         aimbot_tick_counter = 0
         aimbot.reset()
+    end
+
+    if settings.enabled("july_silent_aim") then
+        silent_aim.tick()
+    else
         silent_aim.reset()
     end
+
+    target_gear_viewer.update()
+
+    local cam_pos
+    if camera and camera.GetPosition then
+        local ok, pos = pcall(camera.GetPosition)
+        if ok then cam_pos = pos end
+    end
+    if not cam_pos then return end
+
+    npc_esp.render(cam_pos)
+    loot_esp.render(cam_pos)
+    trap_esp.render(cam_pos)
+    aimbot_visuals.render()
+    silent_visuals.render()
+    target_gear_viewer.draw()
 end
 
 return M

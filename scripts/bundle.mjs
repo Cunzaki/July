@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Builds july.lua — the single Vector-executable script.
+ * Builds july.lua - the single Vector-executable script.
  */
 
 import fs from "fs";
@@ -16,20 +16,40 @@ const ORDER = [
   "core/env.lua",
   "core/debug.lua",
   "core/settings.lua",
+  "core/cache.lua",
+  "core/session.lua",
+  "core/feature_bind.lua",
+  "core/menu_util.lua",
   "core/math_util.lua",
   "core/color_util.lua",
   "core/scan_yield.lua",
+  "core/scan_async.lua",
   "core/draw_util.lua",
+  "core/image_cache.lua",
+  "core/world_vis.lua",
   "core/silent_ray.lua",
   "core/manip_math.lua",
+  "core/ballistic.lua",
+  "game/item_tiers.lua",
+  "game/tier_util.lua",
+  "game/hitparts.lua",
   "game/loot_catalog.lua",
   "game/trap_types.lua",
+  "game/havoc_sync.lua",
   "game/asset_urls.lua",
+  "game/item_images.lua",
+  "game/items.lua",
+  "game/target_gear.lua",
   "game/weapons.lua",
+  "game/combat_stats.lua",
   "game/combat_origin.lua",
+  "game/npc_types.lua",
   "game/entity_scan.lua",
   "game/loot_scan.lua",
   "game/trap_scan.lua",
+  "core/esp_scheduler.lua",
+  "core/esp_render.lua",
+  "game/gc_weapon_mods.lua",
   "features/combat/combat_menu.lua",
   "menu/menu_defs.lua",
   "features/utility/config.lua",
@@ -44,18 +64,19 @@ const ORDER = [
   "features/visuals/trap_esp.lua",
   "features/visuals/aimbot_visuals.lua",
   "features/visuals/silent_visuals.lua",
+  "features/visuals/target_gear_viewer.lua",
   "menu/tabs.lua",
   "app.lua",
 ];
 
 const header = `--[[
-    July — Havoc for Project Vector
+    July - Havoc for Project Vector
     https://github.com/Cunzaki/July
     Built: ${new Date().toISOString()}
 ]]
 
 July = {
-    version = "0.3.0",
+    version = "0.8.4",
     debug = false,
     _mods = {},
     bundled = true,
@@ -101,7 +122,7 @@ local ok, err = pcall(function()
         return
     end
 
-    print("[July] v" .. (July.version or "?") .. " ready — open Scripts → July")
+    print("[July] v" .. (July.version or "dev") .. " ready - open Scripts then July")
 end)
 
 if not ok then

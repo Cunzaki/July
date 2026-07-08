@@ -1,5 +1,31 @@
 local M = {}
 
+function M.normalize_rgba(c, fallback)
+    fallback = fallback or { 1, 1, 1, 1 }
+    if type(c) ~= "table" then return fallback end
+
+    local r = tonumber(c[1] or c.r) or 0
+    local g = tonumber(c[2] or c.g) or 0
+    local b = tonumber(c[3] or c.b) or 0
+    local a = tonumber(c[4] or c.a)
+    if a == nil then a = 1 end
+
+    if r > 1 or g > 1 or b > 1 or a > 1 then
+        r, g, b, a = r / 255, g / 255, b / 255, a / 255
+    end
+
+    r = math.max(0, math.min(1, r))
+    g = math.max(0, math.min(1, g))
+    b = math.max(0, math.min(1, b))
+    a = math.max(0, math.min(1, a))
+
+    if (r + g + b) < 0.04 and fallback then
+        return M.normalize_rgba(fallback, { 1, 1, 1, 1 })
+    end
+
+    return { r, g, b, a }
+end
+
 function M.hsv_to_rgb(h, s, v)
     local i = math.floor(h * 6)
     local f = h * 6 - i

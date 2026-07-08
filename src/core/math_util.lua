@@ -9,4 +9,13 @@ function M.distance_sq(a, b)
     return M.distance3(a.x - b.x, a.y - b.y, a.z - b.z) ^ 2
 end
 
+function M.screen_fov_dist_sq(sx, sy, cx, cy)
+    local dx, dy = sx - cx, sy - cy
+    return dx * dx + dy * dy
+end
+
+function M.screen_fov_dist(sx, sy, cx, cy)
+    return math.sqrt(M.screen_fov_dist_sq(sx, sy, cx, cy))
+end
+
 return M

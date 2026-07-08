@@ -1,0 +1,95 @@
+local settings = July.require("core.settings")
+local constants = July.require("core.constants")
+local cache = July.require("core.cache")
+
+local M = {}
+
+local last = {
+    entity = 0,
+    loot = 0,
+    drops = 0,
+    trap = 0,
+    live = 0,
+}
+
+local function now()
+    return os.clock()
+end
+
+local function combat_active()
+    return settings.enabled("july_silent_aim")
+        or settings.enabled("havoc_aimbot_enabled")
+end
+
+local function any_world_esp()
+    return settings.enabled("havoc_loot_enabled")
+        or settings.enabled("havoc_trap_enabled")
+end
+
+local function any_npc_esp()
+    return settings.enabled("havoc_npc_enabled")
+end
+
+function M.tick(frame_counter)
+    frame_counter = frame_counter or 0
+    local t = now()
+    local fast = combat_active()
+    local entity_scan = July.require("game.entity_scan")
+    local loot_scan = July.require("game.loot_scan")
+    local trap_scan = July.require("game.trap_scan")
+    local scan_budget = constants.SCAN_BUDGET_MS or 4
+
+    if any_npc_esp() then
+        local entity_iv = fast and 0.5 or constants.ENTITY_SCAN_INTERVAL
+        if t - last.entity >= entity_iv then
+            last.entity = t
+            entity_scan.refresh()
+        end
+    end
+
+    if any_world_esp() then
+        if t - last.loot >= constants.LOOT_SCAN_INTERVAL then
+            last.loot = t
+            loot_scan.queue_refresh()
+        end
+        local drop_iv = fast and 0.5 or constants.DROP_SCAN_INTERVAL
+        if t - last.drops >= drop_iv then
+            last.drops = t
+            loot_scan.queue_refresh_drops()
+        end
+        loot_scan.tick_async(scan_budget)
+    end
+
+    if settings.enabled("havoc_trap_enabled") then
+        if t - last.trap >= constants.TRAP_SCAN_INTERVAL then
+            last.trap = t
+            trap_scan.queue_refresh()
+        end
+        trap_scan.tick_async(scan_budget)
+    end
+
+    local live_iv = fast and 0.08 or 0.18
+    if t - last.live >= live_iv then
+        last.live = t
+        if any_npc_esp() then
+            entity_scan.refresh_live()
+        end
+        if any_world_esp() then
+            loot_scan.refresh_live()
+        end
+        if settings.enabled("havoc_trap_enabled") then
+            trap_scan.refresh_live()
+        end
+    end
+end
+
+function M.reset()
+    last.entity = 0
+    last.loot = 0
+    last.drops = 0
+    last.trap = 0
+    last.live = 0
+    cache.reset()
+end
+
+return M

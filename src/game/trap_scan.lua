@@ -1,49 +1,83 @@
 local constants = July.require("core.constants")
 local scan_yield = July.require("core.scan_yield")
 local trap_types = July.require("game.trap_types")
+local env = July.require("core.env")
 
 local M = {}
 
 local trap_cache = {}
 local trap_cache_stamp = -9997
 local trap_folders_found = false
+local trap_live_cursor = 1
 
 local IGNORED_FOLDER = nil
 local EVENT_OBJECTS_FOLDER = nil
 local ENV_INTERACTABLE_FOLDER = nil
 
 local function get_buildings_folder()
-    return game.Workspace:FindFirstChild("Buildings")
+    local ws = env.get_workspace()
+    if not ws then return nil end
+    return env.safe_call(function()
+        if ws.FindFirstChild then return ws:FindFirstChild("Buildings") end
+        return nil
+    end)
 end
 
 local function get_ignored_folder()
+    if IGNORED_FOLDER and not env.is_valid(IGNORED_FOLDER) then
+        IGNORED_FOLDER = nil
+    end
     if not IGNORED_FOLDER then
-        IGNORED_FOLDER = game.Workspace:FindFirstChild("Ignored")
+        local ws = env.get_workspace()
+        if ws then
+            IGNORED_FOLDER = env.safe_call(function()
+                if ws.FindFirstChild then return ws:FindFirstChild("Ignored") end
+                return nil
+            end)
+        end
     end
     return IGNORED_FOLDER
 end
 
 local function get_event_objects_folder()
+    if EVENT_OBJECTS_FOLDER and not env.is_valid(EVENT_OBJECTS_FOLDER) then
+        EVENT_OBJECTS_FOLDER = nil
+    end
     if not EVENT_OBJECTS_FOLDER then
         local buildings = get_buildings_folder()
         if buildings then
             EVENT_OBJECTS_FOLDER = buildings:FindFirstChild("EventObjects")
         end
         if not EVENT_OBJECTS_FOLDER then
-            EVENT_OBJECTS_FOLDER = game.Workspace:FindFirstChild("EventObjects")
+            local ws = env.get_workspace()
+            if ws then
+                EVENT_OBJECTS_FOLDER = env.safe_call(function()
+                    if ws.FindFirstChild then return ws:FindFirstChild("EventObjects") end
+                    return nil
+                end)
+            end
         end
     end
     return EVENT_OBJECTS_FOLDER
 end
 
 local function get_env_interactable_folder()
+    if ENV_INTERACTABLE_FOLDER and not env.is_valid(ENV_INTERACTABLE_FOLDER) then
+        ENV_INTERACTABLE_FOLDER = nil
+    end
     if not ENV_INTERACTABLE_FOLDER then
         local buildings = get_buildings_folder()
         if buildings then
             ENV_INTERACTABLE_FOLDER = buildings:FindFirstChild("EnvInteractable")
         end
         if not ENV_INTERACTABLE_FOLDER then
-            ENV_INTERACTABLE_FOLDER = game.Workspace:FindFirstChild("EnvInteractable")
+            local ws = env.get_workspace()
+            if ws then
+                ENV_INTERACTABLE_FOLDER = env.safe_call(function()
+                    if ws.FindFirstChild then return ws:FindFirstChild("EnvInteractable") end
+                    return nil
+                end)
+            end
         end
     end
     return ENV_INTERACTABLE_FOLDER
@@ -59,7 +93,7 @@ local function collect_tripmines(container, out, depth)
         scan_yield.yield()
 
         local child = children[i]
-        if child.ClassName == "Folder" and child.Name == "Tripmine" then
+        if child.ClassName == "Folder" and child.Name:find("Tripmine", 1, true) then
             local mainPart = child:FindFirstChild("mainPart")
             local connectedPart = child:FindFirstChild("connectedPart")
             if mainPart and mainPart:IsA("BasePart") then
@@ -223,11 +257,11 @@ local function collect_toxic_gas(container, out, depth)
     end
 end
 
-function M.refresh()
+function M.refresh(force)
     local interval = trap_folders_found and constants.TRAP_SCAN_INTERVAL or constants.FOLDER_POLL_INTERVAL
 
     local now = os.clock()
-    if (now - trap_cache_stamp) < interval then return end
+    if not force and (now - trap_cache_stamp) < interval then return end
     trap_cache_stamp = now
 
     local out = {}
@@ -277,10 +311,63 @@ function M.refresh()
     end
 
     trap_folders_found = any_found
-
-    if #out > 0 then
-        trap_cache = out
+    trap_cache = out
+    if trap_live_cursor > #trap_cache then
+        trap_live_cursor = 1
     end
+end
+
+function M.refresh_live()
+    local n = #trap_cache
+    if n == 0 then return end
+
+    local batch = constants.TRAP_LIVE_BATCH or 10
+    local checked = 0
+
+    while checked < batch and n > 0 do
+        if trap_live_cursor > n then trap_live_cursor = 1 end
+
+        local trap = trap_cache[trap_live_cursor]
+        if not trap or not env.is_valid(trap.root) or not env.is_valid(trap.model) then
+            trap_cache[trap_live_cursor] = trap_cache[n]
+            trap_cache[n] = nil
+            n = n - 1
+        else
+            if trap.extra and not env.is_valid(trap.extra) then
+                trap.extra = nil
+            end
+            trap_live_cursor = trap_live_cursor + 1
+        end
+        checked = checked + 1
+    end
+end
+
+local refresh_co = nil
+
+function M.queue_refresh()
+    if refresh_co and coroutine.status(refresh_co) ~= "dead" then return end
+    refresh_co = coroutine.create(function()
+        M.refresh(true)
+    end)
+end
+
+function M.tick_async(budget_ms)
+    local scan_async = July.require("core.scan_async")
+    budget_ms = budget_ms or constants.SCAN_BUDGET_MS or 4
+    if refresh_co and scan_async.tick(refresh_co, budget_ms) then
+        refresh_co = nil
+    end
+end
+
+function M.invalidate()
+    trap_cache = {}
+    trap_cache_stamp = -9997
+    trap_folders_found = false
+    trap_live_cursor = 1
+    refresh_co = nil
+    IGNORED_FOLDER = nil
+    EVENT_OBJECTS_FOLDER = nil
+    ENV_INTERACTABLE_FOLDER = nil
 end
 
 function M.get_cache()

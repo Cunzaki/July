@@ -3,6 +3,16 @@ local color_util = July.require("core.color_util")
 
 local M = {}
 
+local function vec3_size(size)
+    if not size then return 1, 1, 1 end
+    return size.X or size.x or 1, size.Y or size.y or 1, size.Z or size.z or 1
+end
+
+local function vec3_pos(pos)
+    if not pos then return nil end
+    return pos.X or pos.x, pos.Y or pos.y, pos.Z or pos.z
+end
+
 function M.get_entity_bounds_from_parts(part_pos, part_size)
     local min_x, min_y, min_z = math.huge, math.huge, math.huge
     local max_x, max_y, max_z = -math.huge, -math.huge, -math.huge
@@ -130,50 +140,17 @@ function M.draw_entity_skeleton(part_pos, color)
     end
 end
 
-function M.draw_entity_3d_box(part_pos, part_size, color)
-    local min_x, min_y, min_z = math.huge, math.huge, math.huge
-    local max_x, max_y, max_z = -math.huge, -math.huge, -math.huge
-    local has_data = false
-
-    for name, pos in pairs(part_pos) do
-        local size = part_size[name]
-        if size then
-            local hx, hy, hz = size.X * 0.5, size.Y * 0.5, size.Z * 0.5
-            local lx, ly, lz = pos.X - hx, pos.Y - hy, pos.Z - hz
-            local ux, uy, uz = pos.X + hx, pos.Y + hy, pos.Z + hz
-            if lx < min_x then min_x = lx end
-            if ly < min_y then min_y = ly end
-            if lz < min_z then min_z = lz end
-            if ux > max_x then max_x = ux end
-            if uy > max_y then max_y = uy end
-            if uz > max_z then max_z = uz end
-            has_data = true
-        else
-            if pos.X < min_x then min_x = pos.X end
-            if pos.Y < min_y then min_y = pos.Y end
-            if pos.Z < min_z then min_z = pos.Z end
-            if pos.X > max_x then max_x = pos.X end
-            if pos.Y > max_y then max_y = pos.Y end
-            if pos.Z > max_z then max_z = pos.Z end
-            has_data = true
-        end
-    end
-
-    if not has_data then return end
-
-    local wcx, wcy, wcz = (min_x + max_x) * 0.5, (min_y + max_y) * 0.5, (min_z + max_z) * 0.5
-    local hwx, hwy, hwz = (max_x - min_x) * 0.5, (max_y - min_y) * 0.5, (max_z - min_z) * 0.5
-
+function M.draw_aabb_3d(wcx, wcy, wcz, hwx, hwy, hwz, color)
     local scr = {}
-    local all_ok = true
+    local visible = 0
     for i = 1, 8 do
         local s = constants.CORNER_SIGNS[i]
         local sx, sy, ok = utility.WorldToScreen(wcx + s[1] * hwx, wcy + s[2] * hwy, wcz + s[3] * hwz)
         scr[i] = { x = sx, y = sy, ok = ok }
-        if not ok then all_ok = false end
+        if ok then visible = visible + 1 end
     end
 
-    if not all_ok then return end
+    if visible < 1 then return end
 
     local edges = {
         { 1, 2 }, { 1, 3 }, { 1, 5 },
@@ -187,10 +164,70 @@ function M.draw_entity_3d_box(part_pos, part_size, color)
 
     for i = 1, #edges do
         local a, b = edges[i][1], edges[i][2]
-        if scr[a].ok and scr[b].ok then
+        if scr[a].ok or scr[b].ok then
             draw.Line(scr[a].x, scr[a].y, scr[b].x, scr[b].y, color)
         end
     end
+end
+
+function M.draw_entity_3d_box(part_pos, part_size, color)
+    local min_x, min_y, min_z = math.huge, math.huge, math.huge
+    local max_x, max_y, max_z = -math.huge, -math.huge, -math.huge
+    local has_data = false
+
+    for name, pos in pairs(part_pos) do
+        local px, py, pz = vec3_pos(pos)
+        local size = part_size[name]
+        if size and px then
+            local hx, hy, hz = vec3_size(size)
+            hx, hy, hz = hx * 0.5, hy * 0.5, hz * 0.5
+            local lx, ly, lz = px - hx, py - hy, pz - hz
+            local ux, uy, uz = px + hx, py + hy, pz + hz
+            if lx < min_x then min_x = lx end
+            if ly < min_y then min_y = ly end
+            if lz < min_z then min_z = lz end
+            if ux > max_x then max_x = ux end
+            if uy > max_y then max_y = uy end
+            if uz > max_z then max_z = uz end
+            has_data = true
+        elseif px then
+            if px < min_x then min_x = px end
+            if py < min_y then min_y = py end
+            if pz < min_z then min_z = pz end
+            if px > max_x then max_x = px end
+            if py > max_y then max_y = py end
+            if pz > max_z then max_z = pz end
+            has_data = true
+        end
+    end
+
+    if not has_data then return end
+
+    local wcx, wcy, wcz = (min_x + max_x) * 0.5, (min_y + max_y) * 0.5, (min_z + max_z) * 0.5
+    local hwx, hwy, hwz = (max_x - min_x) * 0.5, (max_y - min_y) * 0.5, (max_z - min_z) * 0.5
+    local max_half = 15
+    hwx = math.min(hwx, max_half)
+    hwy = math.min(hwy, max_half)
+    hwz = math.min(hwz, max_half)
+    M.draw_aabb_3d(wcx, wcy, wcz, hwx, hwy, hwz, color)
+end
+
+function M.draw_root_3d_box(root, color)
+    if not root then return end
+    local ok_pos, pos = pcall(function() return root.Position end)
+    local ok_size, size = pcall(function() return root.Size end)
+    if not ok_pos or not ok_size or not pos then return end
+
+    local px, py, pz = vec3_pos(pos)
+    local sx, sy, sz = vec3_size(size)
+    if not px then return end
+
+    local max_half = 15
+    sx = math.min(math.abs(sx), max_half)
+    sy = math.min(math.abs(sy), max_half)
+    sz = math.min(math.abs(sz), max_half)
+
+    M.draw_aabb_3d(px, py, pz, sx * 0.5, sy * 0.5, sz * 0.5, color)
 end
 
 function M.draw_esp(bounds, name_str, dist_val, opts)

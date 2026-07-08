@@ -1,106 +1,152 @@
+local env = July.require("core.env")
+
 local M = {}
 
+-- lootType ids from game dump (33) + body bags
 M.LOOT_TYPES = {
-    { key = "loot_medium_crate", match = "Medium Wooden Crate", display = "Medium Wooden Crate", color = { 0.62, 0.44, 0.24, 1.0 } },
-    { key = "loot_complex_crate", match = "Complex Crate", display = "Complex Crate", color = { 0.55, 0.55, 0.6, 1.0 } },
-    { key = "loot_military_crate", match = "Military Crate", display = "Military Crate", color = { 0.3, 0.55, 0.3, 1.0 } },
-    { key = "loot_wooden_crate", match = "Wooden Crate", display = "Wooden Crate", color = { 0.55, 0.4, 0.25, 1.0 } },
-    { key = "loot_weapon_locker", match = "Weapon Locker", display = "Weapon Locker", color = { 1.0, 0.4, 0.2, 1.0 } },
-    { key = "loot_weapon_box", match = "Weapon Box", display = "Weapon Box", color = { 1.0, 0.35, 0.25, 1.0 } },
-    { key = "loot_rifle_case", match = "Rifle Case", display = "Rifle Case", color = { 1.0, 0.5, 0.3, 1.0 } },
-    { key = "loot_pistol_case", match = "Pistol Case", display = "Pistol Case", color = { 1.0, 0.45, 0.3, 1.0 } },
-    { key = "loot_small_case", match = "Small Case", display = "Small Case", color = { 0.9, 0.6, 0.4, 1.0 } },
-    { key = "loot_ammunition_box", match = "Ammunition Box", display = "Ammunition Box", color = { 0.3, 0.75, 1.0, 1.0 } },
-    { key = "loot_technical_shelf", match = "Technical Shelf", display = "Technical Shelf", color = { 0.35, 0.7, 0.9, 1.0 } },
-    { key = "loot_tool_shelf", match = "Tool Shelf", display = "Tool Shelf", color = { 0.4, 0.68, 0.88, 1.0 } },
-    { key = "loot_toolbox", match = "Toolbox", display = "Toolbox", color = { 0.4, 0.65, 0.85, 1.0 } },
-    { key = "loot_medical_box", match = "Medical Box", display = "Medical Box", color = { 0.9, 0.2, 0.2, 1.0 } },
-    { key = "loot_safe", match = "Safe", display = "Safe", color = { 1.0, 0.85, 0.2, 1.0 } },
-    { key = "loot_cabinet", match = "Cabinet", display = "Cabinet", color = { 0.9, 0.75, 0.3, 1.0 } },
-    { key = "loot_cash_register", match = "Cash Register", display = "Cash Register", color = { 1.0, 0.8, 0.1, 1.0 } },
-    { key = "loot_duffel_bag", match = "Duffel Bag", display = "Duffel Bag", color = { 0.85, 0.7, 0.35, 1.0 } },
-    { key = "loot_backpack", match = "backpack", display = "Backpack", color = { 0.8, 0.65, 0.3, 1.0 } },
-    { key = "loot_closet", match = "Closet", display = "Closet", color = { 0.6, 0.6, 0.65, 1.0 } },
-    { key = "loot_computer", match = "Computer", display = "Computer", color = { 0.3, 0.9, 0.9, 1.0 } },
-    { key = "loot_server_unit", match = "Server Unit", display = "Server Unit", color = { 0.25, 0.8, 0.95, 1.0 } },
-    { key = "loot_powerbox", match = "PowerBox", display = "Power Box", color = { 0.9, 0.85, 0.2, 1.0 } },
-    { key = "loot_standing_atm", match = "StandingATM", display = "ATM", color = { 0.2, 0.9, 0.5, 1.0 } },
-    { key = "loot_locker", match = "Locker", display = "Locker", color = { 0.55, 0.55, 0.6, 1.0 } },
-    { key = "loot_tall_fridge", match = "Tall Fridge", display = "Tall Fridge", color = { 0.7, 0.85, 0.9, 1.0 } },
-    { key = "loot_fridge", match = "Fridge", display = "Fridge", color = { 0.75, 0.88, 0.92, 1.0 } },
-    { key = "loot_stove", match = "Stove", display = "Stove", color = { 0.5, 0.5, 0.5, 1.0 } },
-    { key = "loot_washing_machine", match = "Washing Machine", display = "Washing Machine", color = { 0.65, 0.75, 0.85, 1.0 } },
-    { key = "loot_dishwasher", match = "Dishwasher", display = "Dishwasher", color = { 0.6, 0.7, 0.8, 1.0 } },
-    { key = "loot_envelope", match = "Envelope", display = "Envelope", color = { 0.9, 0.85, 0.7, 1.0 } },
-    { key = "loot_explosive_barrel", match = "ExplosiveBarrel", display = "Explosive Barrel", color = { 1.0, 0.3, 0.0, 1.0 } },
-    { key = "loot_door", match = { "WoodenDoor", "DoubleGlassDoor", "DoubleMetalDoor", "MetalDoor", "GarageDoorLock" },
-      display = "Locked Door", color = { 0.5, 0.4, 0.3, 1.0 } },
+    { key = "loot_ammo_crate", loot_type = "ammo.crate", display = "Ammo Crate", color = { 0.3, 0.75, 1.0, 1.0 } },
+    { key = "loot_big_safe", loot_type = "big.safe", display = "Safe", color = { 1.0, 0.85, 0.2, 1.0 } },
+    { key = "loot_cabinet", loot_type = "cabinet", display = "Cabinet", color = { 0.9, 0.75, 0.3, 1.0 } },
+    { key = "loot_cash_register", loot_type = "cash.register", display = "Cash Register", color = { 1.0, 0.8, 0.1, 1.0 } },
+    { key = "loot_closet", loot_type = "closet", display = "Closet", color = { 0.6, 0.6, 0.65, 1.0 } },
+    { key = "loot_complex_crate", loot_type = "complex.crate", display = "Complex Crate", color = { 0.55, 0.55, 0.6, 1.0 } },
+    { key = "loot_computer", loot_type = "computer", display = "Computer", color = { 0.3, 0.9, 0.9, 1.0 } },
+    { key = "loot_dishwasher", loot_type = "dishwasher", display = "Dishwasher", color = { 0.6, 0.7, 0.8, 1.0 } },
+    { key = "loot_duffel_bag", loot_type = "duffel.bag", display = "Duffel Bag", color = { 0.85, 0.7, 0.35, 1.0 } },
+    { key = "loot_envelope", loot_type = "envelope", display = "Envelope", color = { 0.9, 0.85, 0.7, 1.0 } },
+    { key = "loot_file_cabinet", loot_type = "file.cabinet", display = "File Cabinet", color = { 0.55, 0.5, 0.45, 1.0 } },
+    { key = "loot_fridge", loot_type = "fridge", display = "Fridge", color = { 0.75, 0.88, 0.92, 1.0 } },
+    { key = "loot_hospital_cabinet", loot_type = "hospital.cabinet", display = "Hospital Cabinet", color = { 0.9, 0.9, 0.95, 1.0 } },
+    { key = "loot_locker", loot_type = "locker", display = "Locker", color = { 0.55, 0.55, 0.6, 1.0 } },
+    { key = "loot_medical_box", loot_type = "medical.box", display = "Medical Box", color = { 0.9, 0.2, 0.2, 1.0 } },
+    { key = "loot_medium_crate", loot_type = "medium.wooden.crate", display = "Medium Wooden Crate", color = { 0.62, 0.44, 0.24, 1.0 } },
+    { key = "loot_military_radio", loot_type = "military.radio", display = "Military Radio", color = { 0.35, 0.55, 0.35, 1.0 } },
+    { key = "loot_military_supply", loot_type = "military.supply", display = "Military Supply", color = { 0.3, 0.55, 0.3, 1.0 } },
+    { key = "loot_pistol_case", loot_type = "pistol.case", display = "Pistol Case", color = { 1.0, 0.45, 0.3, 1.0 } },
+    { key = "loot_rifle_case", loot_type = "rifle.case", display = "Rifle Case", color = { 1.0, 0.5, 0.3, 1.0 } },
+    { key = "loot_server_unit", loot_type = "server.unit", display = "Server Unit", color = { 0.25, 0.8, 0.95, 1.0 } },
+    { key = "loot_small_case", loot_type = "small.case", display = "Small Case", color = { 0.9, 0.6, 0.4, 1.0 } },
+    { key = "loot_standing_atm", loot_type = "standing.atm", display = "ATM", color = { 0.2, 0.9, 0.5, 1.0 } },
+    { key = "loot_stove", loot_type = "stove", display = "Stove", color = { 0.5, 0.5, 0.5, 1.0 } },
+    { key = "loot_tall_fridge", loot_type = "tall.fridge", display = "Tall Fridge", color = { 0.7, 0.85, 0.9, 1.0 } },
+    { key = "loot_tool_shelf", loot_type = "tool.shelf", display = "Tool Shelf", color = { 0.4, 0.68, 0.88, 1.0 } },
+    { key = "loot_toolbox", loot_type = "toolbox", display = "Toolbox", color = { 0.4, 0.65, 0.85, 1.0 } },
+    { key = "loot_washing_machine", loot_type = "washing.machine", display = "Washing Machine", color = { 0.65, 0.75, 0.85, 1.0 } },
+    { key = "loot_weapon_box", loot_type = "weapon.box", display = "Weapon Box", color = { 1.0, 0.35, 0.25, 1.0 } },
+    { key = "loot_weapon_locker", loot_type = "weapon.locker", display = "Weapon Locker", color = { 1.0, 0.4, 0.2, 1.0 } },
+    { key = "loot_wooden_crate", loot_type = "wooden.crate", display = "Wooden Crate", color = { 0.55, 0.4, 0.25, 1.0 } },
+    { key = "loot_door", loot_type = "door", display = "Locked Door", color = { 0.5, 0.4, 0.3, 1.0 } },
 }
 
-M.LOOT_FALLBACK = { key = "loot_other", display = "Other Loot", color = { 0.8, 0.8, 0.8, 1.0 } }
-M.BODY_BAG_TYPE = { key = "loot_body_bag", display = "Body Bag", color = { 0.35, 0.35, 0.35, 1.0 } }
+M.BODY_BAG_TYPE = { key = "loot_body_bag", loot_type = "body.bag", display = "Body Bag", color = { 0.35, 0.35, 0.35, 1.0 } }
 
+M.DROP_TYPES = {
+    { key = "loot_dropped_guns", loot_type = "drop.gun", display = "Dropped Guns", color = { 0.95, 0.32, 0.22, 1.0 } },
+    { key = "loot_dropped_items", loot_type = "drop.item", display = "Dropped Items", color = { 0.55, 0.55, 0.58, 1.0 } },
+    { key = "loot_keycards", loot_type = "drop.keycard", display = "Keycards", color = { 0.95, 0.82, 0.32, 1.0 } },
+}
+
+M.TYPE_MAP = {}
+M.NAME_MAP = {}
 M.MULTICOMBO_ENTRIES = {}
 M.MULTICOMBO_LABELS = {}
 M.MULTICOMBO_DEFAULTS = {}
 M.KEY_TO_INDEX = {}
 
-local function rebuild_multicombo()
+local MODEL_ALIASES = {
+    ["Ammunition Box"] = "ammo.crate",
+    ["Safe"] = "big.safe",
+    ["Cash Register"] = "cash.register",
+    ["HospitalCabinet"] = "hospital.cabinet",
+    ["StandingATM"] = "standing.atm",
+    ["Military Crate"] = "military.supply",
+    ["Raider Cache"] = "big.safe",
+    ["Technical Shelf"] = "tool.shelf",
+    ["Surgeon's Tool Shelf"] = "tool.shelf",
+    ["WoodenDoor"] = "door",
+    ["DoubleGlassDoor"] = "door",
+    ["DoubleMetalDoor"] = "door",
+    ["MetalDoor"] = "door",
+    ["GarageDoorLock"] = "door",
+}
+
+local function rebuild()
+    M.TYPE_MAP = {}
+    M.NAME_MAP = {}
     M.MULTICOMBO_ENTRIES = {}
     M.MULTICOMBO_LABELS = {}
     M.MULTICOMBO_DEFAULTS = {}
     M.KEY_TO_INDEX = {}
 
     for i = 1, #M.LOOT_TYPES do
-        M.MULTICOMBO_ENTRIES[#M.MULTICOMBO_ENTRIES + 1] = M.LOOT_TYPES[i]
-        M.MULTICOMBO_LABELS[#M.MULTICOMBO_LABELS + 1] = M.LOOT_TYPES[i].display
-        M.MULTICOMBO_DEFAULTS[#M.MULTICOMBO_DEFAULTS + 1] = false
-        M.KEY_TO_INDEX[M.LOOT_TYPES[i].key] = #M.MULTICOMBO_ENTRIES
+        local entry = M.LOOT_TYPES[i]
+        M.TYPE_MAP[entry.loot_type] = entry
+        M.KEY_TO_INDEX[entry.key] = i
+        M.MULTICOMBO_ENTRIES[i] = entry
+        M.MULTICOMBO_LABELS[i] = entry.display
+        M.MULTICOMBO_DEFAULTS[i] = true
     end
 
-    M.MULTICOMBO_ENTRIES[#M.MULTICOMBO_ENTRIES + 1] = M.LOOT_FALLBACK
-    M.MULTICOMBO_LABELS[#M.MULTICOMBO_LABELS + 1] = M.LOOT_FALLBACK.display
-    M.MULTICOMBO_DEFAULTS[#M.MULTICOMBO_DEFAULTS + 1] = false
-    M.KEY_TO_INDEX[M.LOOT_FALLBACK.key] = #M.MULTICOMBO_ENTRIES
+    local base = #M.LOOT_TYPES
+    for i = 1, #M.DROP_TYPES do
+        local entry = M.DROP_TYPES[i]
+        local idx = base + i
+        M.TYPE_MAP[entry.loot_type] = entry
+        M.KEY_TO_INDEX[entry.key] = idx
+        M.MULTICOMBO_ENTRIES[idx] = entry
+        M.MULTICOMBO_LABELS[idx] = entry.display
+        M.MULTICOMBO_DEFAULTS[idx] = true
+    end
 
-    M.MULTICOMBO_ENTRIES[#M.MULTICOMBO_ENTRIES + 1] = M.BODY_BAG_TYPE
-    M.MULTICOMBO_LABELS[#M.MULTICOMBO_LABELS + 1] = M.BODY_BAG_TYPE.display
-    M.MULTICOMBO_DEFAULTS[#M.MULTICOMBO_DEFAULTS + 1] = false
-    M.KEY_TO_INDEX[M.BODY_BAG_TYPE.key] = #M.MULTICOMBO_ENTRIES
+    local body_idx = base + #M.DROP_TYPES + 1
+    M.TYPE_MAP[M.BODY_BAG_TYPE.loot_type] = M.BODY_BAG_TYPE
+    M.KEY_TO_INDEX[M.BODY_BAG_TYPE.key] = body_idx
+    M.MULTICOMBO_ENTRIES[body_idx] = M.BODY_BAG_TYPE
+    M.MULTICOMBO_LABELS[body_idx] = M.BODY_BAG_TYPE.display
+    M.MULTICOMBO_DEFAULTS[body_idx] = true
+
+    for model_name, loot_type in pairs(MODEL_ALIASES) do
+        M.NAME_MAP[model_name] = loot_type
+    end
+    for i = 1, #M.LOOT_TYPES do
+        local entry = M.LOOT_TYPES[i]
+        if entry.display then
+            M.NAME_MAP[entry.display] = entry.loot_type
+        end
+    end
 end
 
-rebuild_multicombo()
+rebuild()
+
+function M.resolve(loot_type_str, model_name)
+    if loot_type_str and M.TYPE_MAP[loot_type_str] then
+        return M.TYPE_MAP[loot_type_str]
+    end
+    if model_name then
+        local alias = M.NAME_MAP[model_name]
+        if alias and M.TYPE_MAP[alias] then
+            return M.TYPE_MAP[alias]
+        end
+        if string.find(model_name, "Door", 1, true) then
+            return M.TYPE_MAP["door"]
+        end
+    end
+    return nil
+end
 
 function M.is_enabled(vals, category)
-    if type(vals) ~= "table" then return false end
-    local idx = M.KEY_TO_INDEX[category and category.key]
+    if not category then return false end
+    local idx = M.KEY_TO_INDEX[category.key]
     if not idx then return false end
-    return vals[idx] == true
+    if type(vals) ~= "table" then return true end
+    local v = vals[idx]
+    if v == nil then return true end
+    return v == true
 end
 
 function M.get_color(category)
     if category and category.color then return category.color end
     return { 1, 1, 1, 1 }
-end
-
-local function name_matches(name, pattern)
-    if type(pattern) == "table" then
-        for i = 1, #pattern do
-            if string.find(name, pattern[i], 1, true) then return true end
-        end
-        return false
-    end
-    return string.find(name, pattern, 1, true) ~= nil
-end
-
-function M.categorize_loot(name)
-    for i = 1, #M.LOOT_TYPES do
-        local entry = M.LOOT_TYPES[i]
-        if name_matches(name, entry.match) then
-            return entry
-        end
-    end
-    return M.LOOT_FALLBACK
 end
 
 return M

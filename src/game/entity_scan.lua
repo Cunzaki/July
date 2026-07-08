@@ -1,5 +1,8 @@
 local constants = July.require("core.constants")
 local scan_yield = July.require("core.scan_yield")
+local havoc_sync = July.require("game.havoc_sync")
+local npc_types = July.require("game.npc_types")
+local env = July.require("core.env")
 
 local M = {}
 
@@ -7,6 +10,7 @@ local entity_by_model = {}
 local characters_folder = nil
 local entity_cache = {}
 local entity_cache_stamp = -9999
+local entity_live_cursor = 1
 
 local function is_humanoid_by_properties(obj)
     local ok_health, health = pcall(function() return obj.Health end)
@@ -43,14 +47,9 @@ local function collect_body_parts(model)
         local child = children[i]
         local cls = child.ClassName
         if cls == "Part" or cls == "MeshPart" then
-            for j = 1, #constants.BONE_NAMES do
-                if child.Name == constants.BONE_NAMES[j] then
-                    parts[child.Name] = child
-                    local ok_size, size = pcall(function() return child.Size end)
-                    sizes[child.Name] = ok_size and size or nil
-                    break
-                end
-            end
+            parts[child.Name] = child
+            local ok_size, size = pcall(function() return child.Size end)
+            sizes[child.Name] = ok_size and size or nil
         end
     end
 
@@ -59,9 +58,18 @@ end
 
 local function get_or_create_entity(model, root, humanoid)
     local entry = entity_by_model[model]
-    if entry then return entry end
+    if entry then
+        if env.is_valid(entry.model) and env.is_valid(entry.root) and env.is_valid(entry.humanoid) then
+            entry.root = root
+            entry.humanoid = humanoid
+            return entry
+        end
+        entity_by_model[model] = nil
+    end
 
     local parts, part_sizes = collect_body_parts(model)
+    local is_boss, is_sniper = npc_types.classify(model)
+
     entry = {
         model = model,
         root = root,
@@ -69,6 +77,8 @@ local function get_or_create_entity(model, root, humanoid)
         parts = parts,
         part_size = part_sizes,
         scr_bounds = { x = 0, y = 0, w = 0, h = 0, valid = false },
+        is_boss = is_boss,
+        is_sniper = is_sniper,
     }
     entity_by_model[model] = entry
     return entry
@@ -142,6 +152,16 @@ local function collect_entities(container, players, out, depth)
 end
 
 local function get_entity_root()
+    if characters_folder and not env.is_valid(characters_folder) then
+        characters_folder = nil
+    end
+
+    local folder = havoc_sync.get_characters_folder()
+    if folder then
+        characters_folder = folder
+        return folder
+    end
+
     if not characters_folder then
         local ok, ws_children = pcall(function() return game.Workspace:GetChildren() end)
         if ok and ws_children then
@@ -186,20 +206,104 @@ function M.refresh()
     entity_cache_stamp = now
 
     local root = get_entity_root()
-    if not root then return end
+    if not root then
+        entity_cache = {}
+        entity_by_model = {}
+        return
+    end
 
     local players = entity.GetPlayers()
     local out = {}
     collect_entities(root, players, out, 0)
 
-    if #out > 0 then
-        local new_by_model = {}
-        for i = 1, #out do
-            new_by_model[out[i].model] = out[i]
-        end
-        entity_by_model = new_by_model
-        entity_cache = out
+    local new_by_model = {}
+    for i = 1, #out do
+        new_by_model[out[i].model] = out[i]
     end
+    entity_by_model = new_by_model
+    entity_cache = out
+    if entity_live_cursor > #entity_cache then
+        entity_live_cursor = 1
+    end
+end
+
+local function get_held_weapon_name(model)
+    if not model then return nil end
+
+    local ok, model_children = pcall(function() return model:GetChildren() end)
+    if ok and model_children then
+        for i = 1, #model_children do
+            local child = model_children[i]
+            if child.ClassName == "Tool" then
+                return child.Name
+            end
+        end
+    end
+
+    return nil
+end
+
+local HELD_EMPTY_CLEAR_TICKS = 45
+
+local function refresh_held_name(ent)
+    local new_held = get_held_weapon_name(ent.model)
+    if new_held and new_held ~= "" then
+        ent._held_name = new_held
+        ent._held_empty_ticks = 0
+        return
+    end
+
+    if ent._held_name then
+        ent._held_empty_ticks = (ent._held_empty_ticks or 0) + 1
+        if ent._held_empty_ticks >= HELD_EMPTY_CLEAR_TICKS then
+            ent._held_name = nil
+            ent._held_empty_ticks = 0
+        end
+    end
+end
+
+function M.refresh_live()
+    local n = #entity_cache
+    if n == 0 then return end
+
+    if entity_live_cursor > n then entity_live_cursor = 1 end
+
+    local batch = math.min(constants.ENTITY_LIVE_BATCH_SIZE or 16, n)
+    for _ = 1, batch do
+        local ent = entity_cache[entity_live_cursor]
+        if ent and env.is_valid(ent.model) and env.is_valid(ent.root) and env.is_valid(ent.humanoid) then
+            local ok_pos, pos = pcall(function() return ent.root.Position end)
+            if ok_pos and pos then
+                ent._live_pos = pos
+                local px, py, pz = pos.X or pos.x, pos.Y or pos.y, pos.Z or pos.z
+                if px then
+                    ent._sx, ent._sy, ent._sok = utility.WorldToScreen(px, py, pz)
+                end
+            end
+            local is_boss, is_sniper = npc_types.classify(ent.model)
+            ent.is_boss = is_boss
+            ent.is_sniper = is_sniper
+            refresh_held_name(ent)
+        end
+        entity_live_cursor = entity_live_cursor + 1
+        if entity_live_cursor > n then entity_live_cursor = 1 end
+    end
+end
+
+function M.is_entry_valid(ent)
+    return ent
+        and env.is_valid(ent.model)
+        and env.is_valid(ent.root)
+        and env.is_valid(ent.humanoid)
+end
+
+function M.invalidate()
+    characters_folder = nil
+    entity_by_model = {}
+    entity_cache = {}
+    entity_cache_stamp = -9999
+    entity_live_cursor = 1
+    havoc_sync.reset()
 end
 
 function M.get_cache()

@@ -1,12 +1,14 @@
 local settings = July.require("core.settings")
 local constants = July.require("core.constants")
 local entity_scan = July.require("game.entity_scan")
+local targeting = July.require("features.combat.targeting")
+local hitparts = July.require("game.hitparts")
 local env = July.require("core.env")
 
 local M = {}
 
 local locked_ent = nil
-local locked_player = nil
+local current_target = nil
 local next_acquire = 0
 
 M.draw_state = {
@@ -20,27 +22,15 @@ M.draw_state = {
     ty = 0,
 }
 
-local BONE_MAP = {
-    [0] = "Head",
-    [1] = "Torso",
-    [2] = "Closest",
-}
-
 local function screen_center()
-    if input and input.GetScreenCenter then
-        return input.GetScreenCenter()
-    end
-    if input and input.get_screen_center then
-        return input.get_screen_center()
-    end
-    return 960, 540
+    return targeting.screen_center()
 end
 
 local function w2s(pos)
     if not pos then return 0, 0, false end
-    local x = pos.X or pos.x
-    local y = pos.Y or pos.y
-    local z = pos.Z or pos.z
+    local x = pos.x or pos.X
+    local y = pos.y or pos.Y
+    local z = pos.z or pos.Z
     if utility.WorldToScreen then
         return utility.WorldToScreen(x, y, z)
     end
@@ -50,63 +40,41 @@ local function w2s(pos)
     return 0, 0, false
 end
 
-local function get_npc_aim_pos(ent, bone_idx, scx, scy)
-    if bone_idx == 2 then
-        local best, best_d = nil, math.huge
-        for name, part in pairs(ent.parts) do
-            local pos = part.Position
-            if pos then
-                local sx, sy, ok = w2s(pos)
-                if ok then
-                    local d = (sx - scx) ^ 2 + (sy - scy) ^ 2
-                    if d < best_d then
-                        best_d = d
-                        best = pos
-                    end
-                end
-            end
-        end
-        return best
-    end
-    local bone = BONE_MAP[bone_idx] or "Head"
-    if bone == "Head" then
-        return ent.parts["Head"] and ent.parts["Head"].Position or ent.root.Position
-    end
-    return ent.parts["Torso"] and ent.parts["Torso"].Position
-        or ent.parts["UpperTorso"] and ent.parts["UpperTorso"].Position
-        or ent.root.Position
+local function npc_target(ent)
+    return {
+        is_npc = true,
+        inst = ent.model,
+        humanoid = ent.humanoid,
+        root = ent.root,
+        parts = ent.parts,
+    }
 end
 
-local function get_player_aim_pos(char, bone_idx, scx, scy)
-    if not char or not env.is_valid(char) then return nil end
-    if bone_idx == 2 then
-        local best, best_d = nil, math.huge
-        local names = { "Head", "UpperTorso", "Torso", "HumanoidRootPart" }
-        for i = 1, #names do
-            local part = env.find_child(char, names[i])
-            if part then
-                local ok, pos = pcall(function() return part.Position end)
-                if ok and pos then
-                    local sx, sy, vis = w2s(pos)
-                    if vis then
-                        local d = (sx - scx) ^ 2 + (sy - scy) ^ 2
-                        if d < best_d then
-                            best_d = d
-                            best = pos
-                        end
-                    end
-                end
-            end
-        end
-        return best
+local function player_target(p, char)
+    return {
+        is_npc = false,
+        player = p,
+        character = char,
+    }
+end
+
+local function dist3(a, b)
+    local ax = a.X or a.x or 0
+    local ay = a.Y or a.y or 0
+    local az = a.Z or a.z or 0
+    local dx, dy, dz = ax - b.x, ay - b.y, az - b.z
+    return math.sqrt(dx * dx + dy * dy + dz * dz)
+end
+
+local function resolve_aim_pos(kind, ent, char, player, bone_idx, scx, scy)
+    local label = hitparts.label_from_index(bone_idx)
+    local target
+    if kind == "npc" then
+        target = npc_target(ent)
+    else
+        target = player_target(player, char)
     end
-    local bone = bone_idx == 1 and "UpperTorso" or "Head"
-    local part = env.find_child(char, bone) or env.find_child(char, "Head")
-    if part then
-        local ok, pos = pcall(function() return part.Position end)
-        if ok then return pos end
-    end
-    return nil
+    return targeting.resolve_bone_world(target, label, scx, scy)
 end
 
 local function npc_alive(ent)
@@ -123,10 +91,9 @@ end
 
 local function evaluate_npc(ent, bone_idx, cam_pos, max_dist, scx, scy, fov, crosshair_prio)
     if not npc_alive(ent) then return nil end
-    local pos = get_npc_aim_pos(ent, bone_idx, scx, scy)
+    local pos = resolve_aim_pos("npc", ent, nil, nil, bone_idx, scx, scy)
     if not pos then return nil end
-    local px, py, pz = pos.X or pos.x, pos.Y or pos.y, pos.Z or pos.z
-    local dist = (cam_pos - pos).Magnitude
+    local dist = dist3(cam_pos, pos)
     if max_dist > 0 and dist > max_dist then return nil end
     local sx, sy, vis = w2s(pos)
     if not vis then return nil end
@@ -135,7 +102,7 @@ local function evaluate_npc(ent, bone_idx, cam_pos, max_dist, scx, scy, fov, cro
     return {
         kind = "npc",
         ent = ent,
-        pos = { x = px, y = py, z = pz },
+        pos = pos,
         score = crosshair_prio and px_dist or dist,
         sx = sx,
         sy = sy,
@@ -147,10 +114,9 @@ local function evaluate_player(p, bone_idx, cam_pos, max_dist, scx, scy, fov, cr
     if p == lp then return nil end
     local char = p.Character or p.character
     if not char or not player_alive(char) then return nil end
-    local pos = get_player_aim_pos(char, bone_idx, scx, scy)
+    local pos = resolve_aim_pos("player", nil, char, p, bone_idx, scx, scy)
     if not pos then return nil end
-    local px, py, pz = pos.X or pos.x, pos.Y or pos.y, pos.Z or pos.z
-    local dist = (cam_pos - pos).Magnitude
+    local dist = dist3(cam_pos, pos)
     if max_dist > 0 and dist > max_dist then return nil end
     local sx, sy, vis = w2s(pos)
     if not vis then return nil end
@@ -160,7 +126,7 @@ local function evaluate_player(p, bone_idx, cam_pos, max_dist, scx, scy, fov, cr
         kind = "player",
         player = p,
         char = char,
-        pos = { x = px, y = py, z = pz },
+        pos = pos,
         score = crosshair_prio and px_dist or dist,
         sx = sx,
         sy = sy,
@@ -179,29 +145,24 @@ end
 
 local function aim_at(target, smooth)
     if not target or not target.pos then return false end
-    local x, y, z = target.pos.x, target.pos.y, target.pos.z
-
-    if camera and camera.look_at then
-        return pcall(camera.look_at, x, y, z, smooth) == true
-    end
-    if camera and camera.LookAt then
-        return pcall(camera.LookAt, x, y, z, smooth) == true
-    end
 
     local scx, scy = screen_center()
-    if target.sx and target.sy then
-        return smooth_mouse(target.sx, target.sy, scx, scy, smooth)
+    local sx, sy = target.sx, target.sy
+    if not sx or not sy then
+        local vis
+        sx, sy, vis = w2s(target.pos)
+        if not vis then return false end
     end
 
-    if target.kind == "npc" and target.ent and camera.TrackTarget then
-        local bone_idx = settings.num("havoc_aimbot_bone", 0)
-        local part = get_npc_aim_pos(target.ent, bone_idx, scx, scy)
-        if part then
-            local key = settings.get("havoc_aimbot_enabled") and (menu.get_key and menu.get_key("havoc_aimbot_enabled") or 2) or 2
-            if key == 0 then key = 2 end
-            pcall(camera.TrackTarget, part, target.ent.humanoid, key, settings.num("havoc_aimbot_max_distance", 3000))
-            return true
-        end
+    if input and input.move_mouse then
+        return smooth_mouse(sx, sy, scx, scy, smooth)
+    end
+
+    if camera and camera.look_at then
+        return pcall(camera.look_at, target.pos.x, target.pos.y, target.pos.z, smooth) == true
+    end
+    if camera and camera.LookAt then
+        return pcall(camera.LookAt, target.pos.x, target.pos.y, target.pos.z, smooth) == true
     end
 
     return false
@@ -256,7 +217,7 @@ function M.tick()
 
     local scx, scy = screen_center()
     local fov = settings.num("havoc_aimbot_fov", 150)
-    local bone_idx = settings.num("havoc_aimbot_bone", 0)
+    local bone_idx = settings.combo_index("havoc_aimbot_bone", hitparts.LABELS, hitparts.DEFAULT_BONE_INDEX)
     local max_dist = settings.num("havoc_aimbot_max_distance", 3000)
     local smooth = math.max(1, settings.num("havoc_aimbot_smooth", 8))
     local sticky = settings.bool("havoc_aimbot_sticky", false)
@@ -274,7 +235,7 @@ function M.tick()
     if not cam_pos then return end
 
     local now = utility.GetTime and utility.GetTime() or os.clock()
-    local target = locked_ent
+    local target = sticky and locked_ent or current_target
 
     if sticky and target and sticky_valid(target, cam_pos, scx, scy, fov, bone_idx, max_dist) then
         if target.kind == "npc" then
@@ -289,7 +250,12 @@ function M.tick()
         target = find_target(cam_pos, scx, scy, fov, bone_idx, max_dist, crosshair_prio, target_players, target_npcs)
         if sticky then
             locked_ent = target
+        else
+            current_target = target
         end
+    elseif target and not sticky_valid(target, cam_pos, scx, scy, fov, bone_idx, max_dist) then
+        target = nil
+        current_target = nil
     end
 
     if target then
@@ -299,13 +265,12 @@ function M.tick()
         aim_at(target, smooth)
     else
         M.draw_state.active = false
-        if camera.StopTracking then camera.StopTracking() end
     end
 end
 
 function M.reset()
     locked_ent = nil
-    locked_player = nil
+    current_target = nil
     M.draw_state.scx = nil
     M.draw_state.active = false
     if camera and camera.StopTracking then camera.StopTracking() end
