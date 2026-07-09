@@ -1,5 +1,3 @@
---[[ Shared ESP scan helpers — part lookup + oriented 3D box data. ]]
-
 local env = July.require("core.env")
 
 local M = {}

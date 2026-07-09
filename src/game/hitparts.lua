@@ -1,6 +1,5 @@
 local M = {}
 
--- Zero-based combo index: 0 = Closest, 1 = Head (default).
 M.DEFAULT_BONE_INDEX = 1
 
 M.LABELS = {

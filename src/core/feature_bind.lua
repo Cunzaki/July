@@ -1,5 +1,3 @@
---[[ Toggle / Hold keybind polling — April Fallen pattern for Vector menu checkboxes. ]]
-
 local settings = July.require("core.settings")
 
 local M = {}

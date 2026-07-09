@@ -65,7 +65,6 @@ function M.register_all()
 
     menu_util.ensure_groups()
 
-    -- Row 1: Aimbot | NPC Visuals
     menu.add_checkbox(TAB, G.AIMBOT, P_AIM, "Enable Aimbot", false)
     menu_util.register_master_keybind(TAB, G.AIMBOT, P_AIM, P_AIM_KEY, "Aimbot Key")
     menu.add_combo(TAB, G.AIMBOT, "havoc_aimbot_bone", "Aimbot Target Bone", combat_menu.SILENT_BONES, 1, { parent = P_AIM })
@@ -154,7 +153,6 @@ function M.register_all()
     menu_util.bind_children("havoc_npc_health_text", { "havoc_npc_health_text_size" })
     menu_util.bind_children("havoc_npc_chams", { "havoc_npc_chams_style" })
 
-    -- Row 2: Loot ESP | Trap ESP
     menu_util.register_keybind(TAB, G.LOOT, P_LOOT, "Enable Loot ESP", false)
     local loot_type_ids = register_loot_type_toggles(TAB, G.LOOT, P_LOOT)
     menu.add_checkbox(TAB, G.LOOT, "havoc_loot_box", "Loot Box", false,
@@ -210,7 +208,6 @@ function M.register_all()
     menu_util.bind_children("havoc_trap_box", { "havoc_trap_box_style" })
     menu_util.bind_children("havoc_trap_distance", { "havoc_trap_distance_pos" })
 
-    -- Row 3: World Visuals | Config
     menu.add_checkbox(TAB, G.WORLD, "havoc_local_ammo", "Show Ammo", false,
         { colorpicker = { 0.55, 0.85, 1.0, 1.0 } })
     menu.add_slider_int(TAB, G.WORLD, "havoc_local_ammo_size", "Ammo Text Size", 8, 24, 12,

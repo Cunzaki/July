@@ -1,9 +1,3 @@
---[[
-    Vector full-mode grid (April/June pattern):
-      menu.add_group(tab, name)           -> left column, new row
-      menu.add_group(tab, name, 0, true)  -> right column, same row
-]]
-
 local M = {}
 
 M.TAB = "July"

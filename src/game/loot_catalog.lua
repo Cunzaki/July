@@ -2,7 +2,6 @@ local env = July.require("core.env")
 
 local M = {}
 
--- lootType ids from game dump (33) + body bags
 M.LOOT_TYPES = {
     { key = "loot_ammo_crate", loot_type = "ammo.crate", display = "Ammo Crate", color = { 0.3, 0.75, 1.0, 1.0 } },
     { key = "loot_big_safe", loot_type = "big.safe", display = "Safe", color = { 1.0, 0.85, 0.2, 1.0 } },

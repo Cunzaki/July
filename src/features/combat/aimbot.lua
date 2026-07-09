@@ -240,7 +240,6 @@ local function sticky_alive(target, cam_pos, max_dist)
     return false
 end
 
-
 local function aim_settings()
     local scx, scy = screen_center()
     return {

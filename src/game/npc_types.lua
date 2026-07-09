@@ -1,12 +1,5 @@
---[[
-    NPC classification for Project Vector.
-    Boss templates: ReplicatedStorage/__tempSTORAGE/characters/<name>/WeldObjects/Mask
-    Runtime: Character:GetAttribute("Boss") / GetAttribute("Sniper")
-]]
-
 local M = {}
 
--- Codename elite NPCs from dump character templates (+ legacy aliases).
 M.BOSS_NAMES = {
     Boris = true,
     Bruno = true,

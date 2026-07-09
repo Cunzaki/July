@@ -26,7 +26,6 @@ function M.w2s(x, y, z)
     return 0, 0, false
 end
 
---[[ Pick closest N entries without sorting the full candidate list. ]]
 function M.pick_closest(entries, budget)
     budget = budget or #entries
     local n = #entries

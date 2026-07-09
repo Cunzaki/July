@@ -1,4 +1,3 @@
--- Auto-generated from Havoc dump. Run: node scripts/extract-extra.mjs
 local M = {}
 
 M.TIER_GAME = {
