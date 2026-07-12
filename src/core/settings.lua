@@ -68,12 +68,25 @@ function M.color(id, default)
     return color_util.normalize_rgba(default, { 1, 1, 1, 1 })
 end
 
+local function as_bool(v, default)
+    if v == nil then return default == true end
+    if v == false or v == 0 or v == "false" or v == "0" then return false end
+    return v == true or v == 1 or v == "true" or v == "1"
+end
+
 function M.multicombo_get(id, index, default)
     local vals = M.get(id, nil)
-    if type(vals) ~= "table" then return default end
+    if type(vals) ~= "table" then return default == true end
     local v = vals[index]
-    if v == nil then return default end
-    return v == true
+    if v == nil and index >= 1 then
+        v = vals[index - 1]
+    end
+    return as_bool(v, default)
+end
+
+-- Alias used by GPU chams / April-style multicombos (1-based index).
+function M.multi(id, index, default)
+    return M.multicombo_get(id, index, default)
 end
 
 function M.on_change(id, fn)

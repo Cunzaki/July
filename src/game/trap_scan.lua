@@ -2,8 +2,11 @@ local constants = July.require("core.constants")
 local scan_yield = July.require("core.scan_yield")
 local trap_types = July.require("game.trap_types")
 local env = July.require("core.env")
+local cache = July.require("core.cache")
 
 local M = {}
+
+M._entries = {}
 
 local trap_cache = {}
 local trap_cache_stamp = -9997
@@ -117,7 +120,7 @@ local function collect_tripmines(container, out, depth)
             local mainPart = child:FindFirstChild("mainPart")
             local connectedPart = child:FindFirstChild("connectedPart")
             if mainPart and mainPart:IsA("BasePart") then
-                add_trap_entry(out, mainPart, child, trap_types.TRAP_TYPES[1], connectedPart)
+                add_trap_entry(out, mainPart, child, trap_types.get("trap_tripmine"), connectedPart)
             end
         elseif child.ClassName == "Folder" then
             collect_tripmines(child, out, depth + 1)
@@ -136,7 +139,7 @@ local function collect_mine_hitboxes(container, out, depth)
 
         local child = children[i]
         if child:IsA("BasePart") and child.Name == "MineHitbox" then
-            add_trap_entry(out, child, child, trap_types.TRAP_TYPES[2], nil)
+            add_trap_entry(out, child, child, trap_types.get("trap_mine"), nil)
         elseif child.ClassName == "Folder" or child:IsA("BasePart") then
             collect_mine_hitboxes(child, out, depth + 1)
         end
@@ -153,34 +156,16 @@ local function collect_alarms(container, out, depth)
         scan_yield.yield()
 
         local child = children[i]
-        if child.ClassName == "Model" and child.Name:find("Alarm", 1, true) then
+        if child.ClassName == "Model"
+            and child.Name:find("Alarm", 1, true)
+            and not child.Name:find("Airstrike", 1, true)
+        then
             local root = child:FindFirstChildWhichIsA("BasePart")
             if root then
-                add_trap_entry(out, root, child, trap_types.TRAP_TYPES[3], nil)
+                add_trap_entry(out, root, child, trap_types.get("trap_alarm"), nil)
             end
         elseif child.ClassName == "Folder" or child.ClassName == "Model" then
             collect_alarms(child, out, depth + 1)
-        end
-    end
-end
-
-local function collect_airstrike_alarms(container, out, depth)
-    if depth > constants.TRAP_SCAN_DEPTH then return end
-
-    local ok, children = pcall(function() return container:GetChildren() end)
-    if not ok or not children then return end
-
-    for i = 1, #children do
-        scan_yield.yield()
-
-        local child = children[i]
-        if child.ClassName == "Model" and child.Name:find("AirstrikeAlarm", 1, true) then
-            local root = child:FindFirstChildWhichIsA("BasePart")
-            if root then
-                add_trap_entry(out, root, child, trap_types.TRAP_TYPES[4], nil)
-            end
-        elseif child.ClassName == "Folder" or child.ClassName == "Model" then
-            collect_airstrike_alarms(child, out, depth + 1)
         end
     end
 end
@@ -199,7 +184,7 @@ local function collect_explosive_barrels(container, out, depth)
             local root = child:FindFirstChild("Base")
             if not root then root = child:FindFirstChildWhichIsA("BasePart") end
             if root then
-                add_trap_entry(out, root, child, trap_types.TRAP_TYPES[5], nil)
+                add_trap_entry(out, root, child, trap_types.get("trap_barrel"), nil)
             end
         end
     end
@@ -218,7 +203,7 @@ local function collect_sentries(container, out, depth)
         if child.ClassName == "Model" then
             local root = child:FindFirstChild("Base")
             if root and root:IsA("BasePart") then
-                add_trap_entry(out, root, child, trap_types.TRAP_TYPES[6], nil)
+                add_trap_entry(out, root, child, trap_types.get("trap_sentry"), nil)
             end
         end
     end
@@ -237,10 +222,10 @@ local function collect_toxic_gas(container, out, depth)
         if child.ClassName == "Model" then
             local root = child:FindFirstChildWhichIsA("BasePart") or child:FindFirstChildWhichIsA("MeshPart")
             if root then
-                add_trap_entry(out, root, child, trap_types.TRAP_TYPES[7], nil)
+                add_trap_entry(out, root, child, trap_types.get("trap_gas"), nil)
             end
         elseif child:IsA("MeshPart") and depth <= 1 then
-            add_trap_entry(out, child, child, trap_types.TRAP_TYPES[7], nil)
+            add_trap_entry(out, child, child, trap_types.get("trap_gas"), nil)
         elseif child.ClassName == "Folder" then
             collect_toxic_gas(child, out, depth + 1)
         end
@@ -282,10 +267,6 @@ function M.refresh(force)
         if minefields then
             collect_mine_hitboxes(minefields, out, 0)
         end
-        local airstrike = event_objects:FindFirstChild("ST_AirstrikeAlarms")
-        if airstrike then
-            collect_airstrike_alarms(airstrike, out, 0)
-        end
         local barrels = event_objects:FindFirstChild("ExplosiveBarrels")
         if barrels then
             collect_explosive_barrels(barrels, out, 0)
@@ -301,47 +282,76 @@ function M.refresh(force)
     end
 
     trap_folders_found = any_found
-    trap_cache = out
+    M._entries = out
+    cache.traps = out
+    trap_cache = cache.traps
+    cache.stats.last_trap_scan = utility and utility.get_tick_count and utility.get_tick_count() or 0
     if trap_live_cursor > #trap_cache then
         trap_live_cursor = 1
     end
 end
 
-function M.refresh_live()
-    local n = #trap_cache
+local function combat_active()
+    local settings = July.require("core.settings")
+    return settings.bool("havoc_aimbot_enabled", false)
+        and settings.enabled("havoc_aimbot_keybind")
+end
+
+local trap_pos_cursor = 1
+
+function M.tick_positions(batch)
+    batch = batch or constants.TRAP_LIVE_BATCH or 16
+    local n = #M._entries
     if n == 0 then return end
 
-    local cache = July.require("core.cache")
-    local settings = July.require("core.settings")
-    local refresh_pos = cache.should_refresh_positions(
-        settings.bool("havoc_aimbot_enabled", false) and settings.enabled("havoc_aimbot_keybind")
-    )
+    if trap_pos_cursor > n then trap_pos_cursor = 1 end
 
-    local batch = constants.TRAP_LIVE_BATCH or 16
-    local checked = 0
-
-    while checked < batch and n > 0 do
-        if trap_live_cursor > n then trap_live_cursor = 1 end
-
-        local trap = trap_cache[trap_live_cursor]
-        if not trap or not env.is_valid(trap.root) or not env.is_valid(trap.model) then
-            trap_cache[trap_live_cursor] = trap_cache[n]
-            trap_cache[n] = nil
-            n = n - 1
-        else
-            if trap.extra and not env.is_valid(trap.extra) then
-                trap.extra = nil
+    for _ = 1, math.min(batch, n) do
+        local trap = M._entries[trap_pos_cursor]
+        if trap and trap.root and env.is_valid(trap.root) then
+            local ok_pos, pos = pcall(function() return trap.root.Position end)
+            if ok_pos and pos then
+                trap.pos = vec3_pos(pos)
             end
-            if refresh_pos then
-                local ok_pos, pos = pcall(function() return trap.root.Position end)
-                if ok_pos and pos then
-                    trap.pos = vec3_pos(pos)
-                end
-            end
-            trap_live_cursor = trap_live_cursor + 1
         end
-        checked = checked + 1
+        trap_pos_cursor = trap_pos_cursor + 1
+        if trap_pos_cursor > n then trap_pos_cursor = 1 end
     end
+end
+
+function M.tick_cache()
+    if not cache.should_refresh_positions(combat_active()) then return end
+
+    cache.prune_invalid(M._entries)
+    cache.traps = M._entries
+    trap_cache = cache.traps
+end
+
+function M.begin_scan()
+    return { co = coroutine.create(function()
+        M.refresh(true)
+    end) }
+end
+
+function M.step_scan(state, batch)
+    if not state or not state.co then return true end
+    if coroutine.status(state.co) == "dead" then return true end
+
+    local scan_async = July.require("core.scan_async")
+    local budget = math.max(2, math.floor((constants.SCAN_BUDGET_MS or 4) * 0.75))
+    for _ = 1, math.max(1, math.floor(batch / 6)) do
+        if scan_async.tick(state.co, budget) then
+            return true
+        end
+    end
+    return coroutine.status(state.co) == "dead"
+end
+
+function M.complete_scan(_state)
+end
+
+function M.refresh_live()
+    -- Legacy hook: position refresh moved to tick_cache (April interval pattern).
 end
 
 local refresh_co = nil
@@ -363,6 +373,8 @@ end
 
 function M.invalidate()
     trap_cache = {}
+    cache.traps = {}
+    M._entries = {}
     trap_cache_stamp = -9997
     trap_folders_found = false
     trap_live_cursor = 1
@@ -373,7 +385,7 @@ function M.invalidate()
 end
 
 function M.get_cache()
-    return trap_cache
+    return cache.traps
 end
 
 return M

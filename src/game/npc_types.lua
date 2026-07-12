@@ -1,46 +1,65 @@
+local env = July.require("core.env")
+
 local M = {}
 
+-- Dump-backed bosses (__tempSTORAGE.characters) + legacy Havoc boss names.
 M.BOSS_NAMES = {
+    Anvil = true,
     Boris = true,
+    Breaker = true,
     Bruno = true,
     Brutus = true,
-    Tagilla = true,
-    Ranger = true,
-    Clutch = true,
-    Kodiak = true,
-    Vandal = true,
-    Grizzly = true,
-    Crossfire = true,
-    Warlock = true,
-    Stalemate = true,
-    Lynx = true,
-    Hawk = true,
-    Talon = true,
-    Volt = true,
-    Dagger = true,
-    Spartan = true,
-    Cipher = true,
-    Maverick = true,
-    Falcon = true,
-    Checkmate = true,
-    Scorch = true,
-    Raptor = true,
-    Knox = true,
-    Fox = true,
     Bullet = true,
-    Zero = true,
+    Cervus = true,
+    Charger = true,
+    Checkmate = true,
+    Cipher = true,
+    Clutch = true,
     Cobra = true,
+    Crossfire = true,
+    Dagger = true,
+    Falcon = true,
+    Fox = true,
     Ghost = true,
-    Shade = true,
-    Mamba = true,
-    Phoenix = true,
-    Anvil = true,
+    Grizzly = true,
     Gunner = true,
+    Hawk = true,
+    Ironclad = true,
+    Kingslayer = true,
+    Knox = true,
+    Kodiak = true,
+    Lockstep = true,
+    Lynx = true,
+    Mamba = true,
+    Maverick = true,
+    Omen = true,
+    Phantom = true,
+    Phoenix = true,
+    Queensguard = true,
+    Ranger = true,
+    Raptor = true,
+    Scorch = true,
+    Shade = true,
+    Spartan = true,
+    Stalemate = true,
+    Tagilla = true,
+    Talon = true,
+    Vandal = true,
+    Volt = true,
+    Warlock = true,
+    Wolf = true,
+    Zero = true,
 }
 
 M.SNIPER_NAMES = {
     Sentry = true,
 }
+
+local function strip_sniper_prefix(name)
+    if not name then return "" end
+    local stripped = name:match("^%[Sniper%]%s*(.+)$")
+    return stripped or name
+end
 
 function M.has_boss_template(model)
     if not model then return false end
@@ -58,7 +77,9 @@ function M.read_attributes(model)
 
     pcall(function()
         if model.GetAttribute then
-            if model:GetAttribute("Boss") then is_boss = true end
+            if model:GetAttribute("Boss") or model:GetAttribute("IsBoss") then
+                is_boss = true
+            end
             if model:GetAttribute("Sniper") or model:GetAttribute("IsSniper") then
                 is_sniper = true
             end
@@ -73,15 +94,20 @@ function M.classify(model)
 
     local is_boss, is_sniper = M.read_attributes(model)
     local name = model.Name or ""
+    local base_name = strip_sniper_prefix(name)
 
     if not is_boss then
-        if M.BOSS_NAMES[name] or M.has_boss_template(model) then
+        if M.BOSS_NAMES[name] or M.BOSS_NAMES[base_name] or M.has_boss_template(model) then
             is_boss = true
         end
     end
 
     if not is_boss then
-        if M.SNIPER_NAMES[name] or name:find("Sniper", 1, true) then
+        if M.SNIPER_NAMES[name]
+            or M.SNIPER_NAMES[base_name]
+            or name:find("Sniper", 1, true)
+            or name:find("[Sniper]", 1, true)
+        then
             is_sniper = true
         end
     else
@@ -95,7 +121,12 @@ function M.display_type(ent)
     if not ent then return nil end
     if ent.is_boss then return "Boss" end
     if ent.is_sniper then return "Sniper" end
-    if ent.model and ent.model.Name == "Sentry" then return nil end
+    if ent.model then
+        local name = ent.model.Name or ""
+        if name == "Sentry" or name:find("Sentry", 1, true) then
+            return "Sentry"
+        end
+    end
     return "Scav"
 end
 

@@ -24,7 +24,11 @@ const ORDER = [
   "core/color_util.lua",
   "core/scan_yield.lua",
   "core/scan_async.lua",
+  "core/incremental_scan.lua",
   "core/draw_util.lua",
+  "core/gpu_chams.lua",
+  "game/item_categories.lua",
+  "game/item_esp_catalog.lua",
   "game/asset_urls.lua",
   "core/image_cache.lua",
   "core/world_vis.lua",
@@ -56,8 +60,10 @@ const ORDER = [
   "features/utility/config.lua",
   "features/combat/targeting.lua",
   "features/combat/aimbot.lua",
+  "features/misc/exploits.lua",
   "features/visuals/npc_esp.lua",
   "features/visuals/loot_esp.lua",
+  "features/visuals/item_esp.lua",
   "features/visuals/trap_esp.lua",
   "features/visuals/aimbot_visuals.lua",
   "features/visuals/local_weapon_hud.lua",
@@ -73,7 +79,7 @@ const header = `--[[
 ]]
 
 July = {
-    version = "0.10.1",
+    version = "0.13.0",
     debug = false,
     _mods = {},
     bundled = true,

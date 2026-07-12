@@ -1,7 +1,6 @@
-local env = July.require("core.env")
-
 local M = {}
 
+-- Synced to dump/game-data/loot_types.txt (+ doors / military aliases still used in maps).
 M.LOOT_TYPES = {
     { key = "loot_ammo_crate", loot_type = "ammo.crate", display = "Ammo Crate", color = { 0.3, 0.75, 1.0, 1.0 } },
     { key = "loot_big_safe", loot_type = "big.safe", display = "Safe", color = { 1.0, 0.85, 0.2, 1.0 } },
@@ -11,11 +10,14 @@ M.LOOT_TYPES = {
     { key = "loot_complex_crate", loot_type = "complex.crate", display = "Complex Crate", color = { 0.55, 0.55, 0.6, 1.0 } },
     { key = "loot_computer", loot_type = "computer", display = "Computer", color = { 0.3, 0.9, 0.9, 1.0 } },
     { key = "loot_dishwasher", loot_type = "dishwasher", display = "Dishwasher", color = { 0.6, 0.7, 0.8, 1.0 } },
+    { key = "loot_double_washing_machine", loot_type = "double.washing.machine", display = "Double Washing Machine", color = { 0.62, 0.72, 0.84, 1.0 } },
     { key = "loot_duffel_bag", loot_type = "duffel.bag", display = "Duffel Bag", color = { 0.85, 0.7, 0.35, 1.0 } },
     { key = "loot_envelope", loot_type = "envelope", display = "Envelope", color = { 0.9, 0.85, 0.7, 1.0 } },
     { key = "loot_file_cabinet", loot_type = "file.cabinet", display = "File Cabinet", color = { 0.55, 0.5, 0.45, 1.0 } },
     { key = "loot_fridge", loot_type = "fridge", display = "Fridge", color = { 0.75, 0.88, 0.92, 1.0 } },
     { key = "loot_hospital_cabinet", loot_type = "hospital.cabinet", display = "Hospital Cabinet", color = { 0.9, 0.9, 0.95, 1.0 } },
+    { key = "loot_hospital_closet", loot_type = "hospital.closet", display = "Hospital Closet", color = { 0.85, 0.88, 0.95, 1.0 } },
+    { key = "loot_hospital_table", loot_type = "hospital.table", display = "Hospital Table", color = { 0.8, 0.85, 0.9, 1.0 } },
     { key = "loot_locker", loot_type = "locker", display = "Locker", color = { 0.55, 0.55, 0.6, 1.0 } },
     { key = "loot_medical_box", loot_type = "medical.box", display = "Medical Box", color = { 0.9, 0.2, 0.2, 1.0 } },
     { key = "loot_medium_crate", loot_type = "medium.wooden.crate", display = "Medium Wooden Crate", color = { 0.62, 0.44, 0.24, 1.0 } },
@@ -30,6 +32,7 @@ M.LOOT_TYPES = {
     { key = "loot_tall_fridge", loot_type = "tall.fridge", display = "Tall Fridge", color = { 0.7, 0.85, 0.9, 1.0 } },
     { key = "loot_tool_shelf", loot_type = "tool.shelf", display = "Tool Shelf", color = { 0.4, 0.68, 0.88, 1.0 } },
     { key = "loot_toolbox", loot_type = "toolbox", display = "Toolbox", color = { 0.4, 0.65, 0.85, 1.0 } },
+    { key = "loot_wall_atm", loot_type = "wall.atm", display = "Wall ATM", color = { 0.15, 0.85, 0.45, 1.0 } },
     { key = "loot_washing_machine", loot_type = "washing.machine", display = "Washing Machine", color = { 0.65, 0.75, 0.85, 1.0 } },
     { key = "loot_weapon_box", loot_type = "weapon.box", display = "Weapon Box", color = { 1.0, 0.35, 0.25, 1.0 } },
     { key = "loot_weapon_locker", loot_type = "weapon.locker", display = "Weapon Locker", color = { 1.0, 0.4, 0.2, 1.0 } },
@@ -45,6 +48,57 @@ M.DROP_TYPES = {
     { key = "loot_keycards", loot_type = "drop.keycard", display = "Keycards", color = { 0.95, 0.82, 0.32, 1.0 } },
 }
 
+-- Container loot grouped for multicombo filters (drops use Item ESP tab).
+M.LOOT_SECTIONS = {
+    {
+        id = "storage",
+        label = "Storage",
+        multicombo = "loot_sec_storage",
+        keys = {
+            "loot_cabinet", "loot_closet", "loot_locker", "loot_fridge", "loot_tall_fridge",
+            "loot_file_cabinet", "loot_hospital_cabinet", "loot_hospital_closet",
+            "loot_weapon_locker", "loot_duffel_bag",
+        },
+    },
+    {
+        id = "crates",
+        label = "Crates & Cases",
+        multicombo = "loot_sec_crates",
+        keys = {
+            "loot_ammo_crate", "loot_wooden_crate", "loot_medium_crate", "loot_complex_crate",
+            "loot_military_supply", "loot_pistol_case", "loot_rifle_case", "loot_small_case",
+            "loot_weapon_box",
+        },
+    },
+    {
+        id = "security",
+        label = "Security & Cash",
+        multicombo = "loot_sec_security",
+        keys = {
+            "loot_big_safe", "loot_cash_register", "loot_envelope", "loot_standing_atm", "loot_wall_atm",
+        },
+    },
+    {
+        id = "utility",
+        label = "Utility & Medical",
+        multicombo = "loot_sec_utility",
+        keys = {
+            "loot_computer", "loot_dishwasher", "loot_double_washing_machine", "loot_hospital_table",
+            "loot_medical_box", "loot_military_radio", "loot_server_unit", "loot_stove",
+            "loot_tool_shelf", "loot_toolbox", "loot_washing_machine",
+        },
+    },
+    {
+        id = "doors",
+        label = "Doors",
+        multicombo = "loot_sec_doors",
+        keys = { "loot_door" },
+    },
+}
+
+M.SECTION_KEY_INDEX = {}
+M.KEY_TO_ENTRY = {}
+
 M.TYPE_MAP = {}
 M.NAME_MAP = {}
 M.MULTICOMBO_ENTRIES = {}
@@ -57,11 +111,15 @@ local MODEL_ALIASES = {
     ["Safe"] = "big.safe",
     ["Cash Register"] = "cash.register",
     ["HospitalCabinet"] = "hospital.cabinet",
+    ["HospitalCloset"] = "hospital.closet",
+    ["HospitalTable"] = "hospital.table",
     ["StandingATM"] = "standing.atm",
+    ["WallATM"] = "wall.atm",
     ["Military Crate"] = "military.supply",
     ["Raider Cache"] = "big.safe",
     ["Technical Shelf"] = "tool.shelf",
     ["Surgeon's Tool Shelf"] = "tool.shelf",
+    ["DoubleWashingMachine"] = "double.washing.machine",
     ["WoodenDoor"] = "door",
     ["DoubleGlassDoor"] = "door",
     ["DoubleMetalDoor"] = "door",
@@ -76,11 +134,14 @@ local function rebuild()
     M.MULTICOMBO_LABELS = {}
     M.MULTICOMBO_DEFAULTS = {}
     M.KEY_TO_INDEX = {}
+    M.SECTION_KEY_INDEX = {}
+    M.KEY_TO_ENTRY = {}
 
     for i = 1, #M.LOOT_TYPES do
         local entry = M.LOOT_TYPES[i]
         M.TYPE_MAP[entry.loot_type] = entry
         M.KEY_TO_INDEX[entry.key] = i
+        M.KEY_TO_ENTRY[entry.key] = entry
         M.MULTICOMBO_ENTRIES[i] = entry
         M.MULTICOMBO_LABELS[i] = entry.display
         M.MULTICOMBO_DEFAULTS[i] = true
@@ -92,6 +153,7 @@ local function rebuild()
         local idx = base + i
         M.TYPE_MAP[entry.loot_type] = entry
         M.KEY_TO_INDEX[entry.key] = idx
+        M.KEY_TO_ENTRY[entry.key] = entry
         M.MULTICOMBO_ENTRIES[idx] = entry
         M.MULTICOMBO_LABELS[idx] = entry.display
         M.MULTICOMBO_DEFAULTS[idx] = true
@@ -100,9 +162,17 @@ local function rebuild()
     local body_idx = base + #M.DROP_TYPES + 1
     M.TYPE_MAP[M.BODY_BAG_TYPE.loot_type] = M.BODY_BAG_TYPE
     M.KEY_TO_INDEX[M.BODY_BAG_TYPE.key] = body_idx
+    M.KEY_TO_ENTRY[M.BODY_BAG_TYPE.key] = M.BODY_BAG_TYPE
     M.MULTICOMBO_ENTRIES[body_idx] = M.BODY_BAG_TYPE
     M.MULTICOMBO_LABELS[body_idx] = M.BODY_BAG_TYPE.display
     M.MULTICOMBO_DEFAULTS[body_idx] = true
+
+    for si = 1, #M.LOOT_SECTIONS do
+        local sec = M.LOOT_SECTIONS[si]
+        for ii = 1, #(sec.keys or {}) do
+            M.SECTION_KEY_INDEX[sec.keys[ii]] = { si, ii }
+        end
+    end
 
     for model_name, loot_type in pairs(MODEL_ALIASES) do
         M.NAME_MAP[model_name] = loot_type
@@ -136,6 +206,19 @@ end
 function M.is_enabled(category)
     if not category or not category.key then return false end
     local settings = July.require("core.settings")
+    local map = M.SECTION_KEY_INDEX[category.key]
+    if map then
+        local sec = M.LOOT_SECTIONS[map[1]]
+        if sec and sec.multicombo then
+            return settings.multi(sec.multicombo, map[2], true)
+        end
+    end
+    if category.loot_type and string.sub(category.loot_type, 1, 5) == "drop." then
+        return false
+    end
+    if category.loot_type == "body.bag" then
+        return false
+    end
     return settings.bool(category.key, true)
 end
 

@@ -4,20 +4,26 @@ M.TRAP_TYPES = {
     { key = "trap_tripmine", display = "Tripmine", color = { 1.0, 0.5, 0.0, 1.0 } },
     { key = "trap_mine", display = "Mine", color = { 1.0, 0.2, 0.0, 1.0 } },
     { key = "trap_alarm", display = "Alarm", color = { 1.0, 0.0, 0.0, 1.0 } },
-    { key = "trap_airstrike", display = "Airstrike Alarm", color = { 1.0, 0.1, 0.1, 1.0 } },
     { key = "trap_barrel", display = "Explosive Barrel", color = { 1.0, 0.3, 0.0, 1.0 } },
     { key = "trap_sentry", display = "Sentry", color = { 0.8, 0.0, 0.0, 1.0 } },
     { key = "trap_gas", display = "Toxic Gas", color = { 0.2, 0.8, 0.0, 1.0 } },
 }
 
+M.BY_KEY = {}
 M.MULTICOMBO_LABELS = {}
 M.MULTICOMBO_DEFAULTS = {}
 M.KEY_TO_INDEX = {}
 
 for i = 1, #M.TRAP_TYPES do
-    M.MULTICOMBO_LABELS[i] = M.TRAP_TYPES[i].display
+    local entry = M.TRAP_TYPES[i]
+    M.MULTICOMBO_LABELS[i] = entry.display
     M.MULTICOMBO_DEFAULTS[i] = true
-    M.KEY_TO_INDEX[M.TRAP_TYPES[i].key] = i
+    M.KEY_TO_INDEX[entry.key] = i
+    M.BY_KEY[entry.key] = entry
+end
+
+function M.get(key)
+    return M.BY_KEY[key]
 end
 
 function M.is_enabled(trap_type)

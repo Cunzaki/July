@@ -4,6 +4,8 @@ local draw_util = July.require("core.draw_util")
 local trap_scan = July.require("game.trap_scan")
 local trap_types = July.require("game.trap_types")
 local esp_render = July.require("core.esp_render")
+local esp_scan = July.require("game.esp_scan")
+local esp_util = July.require("core.esp_util")
 local env = July.require("core.env")
 
 local M = {}
@@ -31,8 +33,22 @@ local function draw_trap_box(trap, color, box_style)
         return
     end
 
-    if trap.pos then
-        local bounds = draw_util.get_entity_bounds_fallback(trap.pos)
+    local box = esp_scan.read_part_box(trap.root)
+    if box then
+        local bounds = esp_util.project_oriented_box(box)
+        if bounds and bounds.valid then
+            if box_style == 0 and draw.CornerBox then
+                draw.CornerBox(bounds.x, bounds.y, bounds.w, bounds.h, color)
+            elseif draw.Rect then
+                draw.Rect(bounds.x, bounds.y, bounds.w, bounds.h, color)
+            end
+            return
+        end
+    end
+
+    local pos = trap.pos
+    if pos then
+        local bounds = draw_util.get_entity_bounds_fallback(pos)
         if bounds.valid then
             if box_style == 0 then
                 draw.CornerBox(bounds.x, bounds.y, bounds.w, bounds.h, color)
@@ -41,6 +57,9 @@ local function draw_trap_box(trap, color, box_style)
             end
         end
     end
+end
+
+function M.update()
 end
 
 function M.render(cam_pos)
@@ -68,9 +87,11 @@ function M.render(cam_pos)
         local trap = trap_cache[i]
         if not trap.root or not env.is_valid(trap.root) then goto continue end
         if not trap_types.is_enabled(trap.trap_type) then goto continue end
-        if not trap.pos then goto continue end
 
-        local dsq = dist_sq(cam_pos, trap.pos)
+        local pos = trap.pos
+        if not pos then goto continue end
+
+        local dsq = dist_sq(cam_pos, pos)
         if dsq > max_dist_sq then goto continue end
 
         count = count + 1
@@ -90,6 +111,7 @@ function M.render(cam_pos)
         local entry = draw_list[i]
         local trap = entry.trap
         local pos = trap.pos
+        if not pos then goto continue_draw end
         local dist = math.sqrt(entry.dist_sq)
 
         local sx, sy, sok = esp_render.w2s(pos.X or pos.x, pos.Y or pos.y, pos.Z or pos.z)

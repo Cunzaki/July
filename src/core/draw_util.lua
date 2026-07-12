@@ -214,6 +214,14 @@ end
 
 function M.draw_root_3d_box(root, color)
     if not root then return end
+    local esp_scan = July.require("game.esp_scan")
+    local esp_util = July.require("core.esp_util")
+    local box = esp_scan.read_part_box(root)
+    if box then
+        esp_util.draw_oriented_box(box, color, 1)
+        return
+    end
+
     local ok_pos, pos = pcall(function() return root.Position end)
     local ok_size, size = pcall(function() return root.Size end)
     if not ok_pos or not ok_size or not pos then return end

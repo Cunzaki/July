@@ -18,6 +18,8 @@ RE/
 
 # Game dump (large; local only)
 dump/
+dump.rar
+
 
 # Local agent/dev notes
 AGENTS.md
@@ -35,3 +37,6 @@ assets/decals/download_report.json
 *.local
 .env
 .env.*
+
+tools/vector-mcp/node_modules/
+

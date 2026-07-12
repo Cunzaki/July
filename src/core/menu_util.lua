@@ -6,8 +6,9 @@ M.G = {
     AIMBOT = "Aimbot",
     NPC = "NPC Visuals",
     LOOT = "Loot ESP",
+    ITEMS = "Item ESP",
     TRAP = "Trap ESP",
-    WORLD = "World Visuals",
+    MISC = "Misc",
     CONFIG = "Config",
 }
 
@@ -36,8 +37,9 @@ function M.ensure_groups()
 
     local rows = {
         { M.G.AIMBOT, M.G.NPC },
-        { M.G.LOOT, M.G.TRAP },
-        { M.G.WORLD, M.G.CONFIG },
+        { M.G.LOOT, M.G.ITEMS },
+        { M.G.TRAP, M.G.MISC },
+        { M.G.CONFIG },
     }
 
     for _, row in ipairs(rows) do
@@ -140,6 +142,7 @@ M.COLOR_DEFAULTS = {
     havoc_npc_skeleton = { 1.0, 1.0, 1.0, 1.0 },
     havoc_loot_box = { 1.0, 1.0, 1.0, 1.0 },
     havoc_trap_box = { 1.0, 0.35, 0.25, 1.0 },
+    havoc_item_box = { 1.0, 1.0, 1.0, 1.0 },
     havoc_local_ammo = { 0.55, 0.85, 1.0, 1.0 },
     havoc_local_reloading = { 1.0, 0.45, 0.2, 1.0 },
 }

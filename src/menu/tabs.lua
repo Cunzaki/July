@@ -11,6 +11,8 @@ local trap_esp = July.require("features.visuals.trap_esp")
 local aimbot_visuals = July.require("features.visuals.aimbot_visuals")
 local local_weapon_hud = July.require("features.visuals.local_weapon_hud")
 local target_gear_viewer = July.require("features.visuals.target_gear_viewer")
+local item_esp = July.require("features.visuals.item_esp")
+local exploits = July.require("features.misc.exploits")
 
 local M = {}
 M._menu_registered = false
@@ -46,6 +48,12 @@ function M.update()
 
     esp_scheduler.tick(frame_counter)
 
+    loot_esp.update()
+    trap_esp.update()
+    item_esp.update()
+
+    exploits.tick()
+
     if settings.bool("havoc_aimbot_enabled", false) then
         aimbot.update_visuals()
         if settings.enabled("havoc_aimbot_keybind") then
@@ -73,7 +81,14 @@ function M.update()
 
     npc_esp.render(cam_pos)
     loot_esp.render(cam_pos)
+    item_esp.render(cam_pos)
     trap_esp.render(cam_pos)
+
+    if frame_counter % 3 == 0 then
+        npc_esp.sync_gpu()
+        loot_esp.sync_gpu()
+    end
+
     aimbot_visuals.render()
     local_weapon_hud.render()
     target_gear_viewer.draw()

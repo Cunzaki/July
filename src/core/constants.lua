@@ -11,7 +11,7 @@ M.BOUNDS_UPDATE_INTERVAL = 3
 M.SCAN_YIELD_EVERY = 24
 M.SCAN_BUDGET_MS = 4
 M.ENTITY_SCAN_INTERVAL = 1.0
-M.ENTITY_LIVE_BATCH_SIZE = 20
+M.ENTITY_LIVE_BATCH_SIZE = 24
 M.NPC_BOUNDS_BATCH = 8
 M.NPC_CHAMS_BUDGET = 6
 M.FOLDER_POLL_INTERVAL = 0.25
@@ -24,7 +24,8 @@ M.LOOT_PRUNE_BATCH = 24
 M.LOOT_COMPACT_INTERVAL = 8.0
 M.LOOT_MAX_PARTS = 6
 M.DROP_SCAN_DEPTH = 4
-M.DROP_SCAN_INTERVAL = 3.5
+M.DROP_SCAN_INTERVAL = 2.0
+M.DROP_LIVE_BATCH = 24
 M.TRAP_LIVE_BATCH = 16
 
 M.TRAP_SCAN_DEPTH = 8
@@ -37,21 +38,22 @@ M.LOOT_MARKER_RADIUS = 3
 M.LOOT_MARKER_GAP = 8
 
 M.ESP_HIDE_SQ = 9
-M.ESP_RENDER_BUDGET = 100
-M.ESP_POS_CACHE_MS = 200
-M.ESP_POS_CACHE_COMBAT_MS = 50
+M.ESP_RENDER_BUDGET = 80
+M.ESP_POS_CACHE_MS = 750
+M.ESP_POS_CACHE_COMBAT_MS = 200
 
 M.SKELETON_OUTLINE_COLOR = { 0, 0, 0, 0.78 }
 
 M.NPC_BOSS_NAMES = {
-    Boris = true, Bruno = true, Brutus = true, Tagilla = true,
-    Ranger = true, Clutch = true, Kodiak = true, Vandal = true, Grizzly = true,
-    Crossfire = true, Warlock = true, Stalemate = true, Lynx = true, Hawk = true,
-    Talon = true, Volt = true, Dagger = true, Spartan = true, Cipher = true,
-    Maverick = true, Falcon = true,
-    Scorch = true, Raptor = true, Knox = true, Fox = true, Bullet = true,
-    Zero = true, Cobra = true, Ghost = true, Shade = true, Checkmate = true,
-    Mamba = true, Phoenix = true, Anvil = true, Gunner = true,
+    Anvil = true, Boris = true, Breaker = true, Bruno = true, Brutus = true,
+    Bullet = true, Cervus = true, Charger = true, Checkmate = true, Cipher = true,
+    Clutch = true, Cobra = true, Crossfire = true, Dagger = true, Falcon = true,
+    Fox = true, Ghost = true, Grizzly = true, Gunner = true, Hawk = true,
+    Ironclad = true, Kingslayer = true, Knox = true, Kodiak = true, Lockstep = true,
+    Lynx = true, Mamba = true, Maverick = true, Omen = true, Phantom = true,
+    Phoenix = true, Queensguard = true, Ranger = true, Raptor = true, Scorch = true,
+    Shade = true, Spartan = true, Stalemate = true, Tagilla = true, Talon = true,
+    Vandal = true, Volt = true, Warlock = true, Wolf = true, Zero = true,
 }
 
 M.BONE_NAMES = {

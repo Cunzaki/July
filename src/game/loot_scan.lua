@@ -9,6 +9,9 @@ local settings = July.require("core.settings")
 
 local M = {}
 
+M._static = {}
+M._drops = {}
+
 local loot_by_model = {}
 local loot_cache = {}
 local loot_cache_stamp = -9998
@@ -61,11 +64,30 @@ local function get_door_info(model)
 end
 
 local function hydrate_loot_entry(entry)
-    if not entry or not entry.model then return end
-    entry.inst = entry.model
-
+    if not entry then return end
     local esp_scan = July.require("game.esp_scan")
-    esp_scan.hydrate_entry(entry)
+
+    if entry.is_drop then
+        if entry.root and env.is_valid(entry.root) then
+            entry.main_part = entry.root
+            esp_scan.hydrate_entry(entry, { part = entry.root })
+            local weld = entry.inst and entry.inst ~= entry.root and entry.inst.ClassName == "Model" and entry.inst
+            if not entry.box and weld and env.is_valid(weld) then
+                local aabb = esp_scan.read_parts_aabb(weld, 4)
+                if aabb then
+                    entry.box = aabb
+                end
+            end
+        end
+        return
+    end
+
+    if not entry.model or not env.is_valid(entry.model) then return end
+    entry.inst = entry.model
+    esp_scan.hydrate_entry(entry, {
+        aabb_inst = entry.model,
+        max_parts = constants.LOOT_MAX_PARTS,
+    })
 
     if not entry.lx and entry.root and env.is_valid(entry.root) then
         local box = esp_scan.read_part_box(entry.root)
@@ -75,15 +97,15 @@ local function hydrate_loot_entry(entry)
             entry.lx = box.x
             entry.ly = box.y + box.hy + 0.25
             entry.lz = box.z
-        else
-            local ok, pos = pcall(function() return entry.root.Position end)
-            if ok and pos then
-                entry.lx = pos.X or pos.x
-                entry.ly = (pos.Y or pos.y) + 0.25
-                entry.lz = pos.Z or pos.z
-            end
         end
     end
+end
+
+local function drop_entry_alive(entry)
+    if not entry then return false end
+    if entry.root and env.is_valid(entry.root) then return true end
+    if entry.inst and env.is_valid(entry.inst) then return true end
+    return false
 end
 
 local function get_or_create_loot(model, root, category, is_open_inst, is_locked_inst)
@@ -513,7 +535,7 @@ end
 local function get_or_create_drop(model, root, category, display_name)
     local entry = loot_by_model[model]
     if entry then
-        if env.is_valid(entry.model) and env.is_valid(entry.root) then
+        if drop_entry_alive(entry) then
             entry.category = category or entry.category
             entry.display_name = display_name
             entry.tier_color = tier_util.get_esp_color(display_name)
@@ -555,13 +577,122 @@ local function register_drop_entry(cache_key, root, category, display_name, out,
     out[#out + 1] = get_or_create_drop(cache_key, root, category, display_name)
 end
 
+local function weld_is_world_drop(weld)
+    if not weld or not env.is_valid(weld) then return false end
+    if is_player_owned(weld) then return false end
+    if is_character_ancestor(weld) then return false end
+    if is_on_viewmodel(weld) then return false end
+    if is_in_equipped_weld_pool(weld) then return false end
+    return is_in_world_weld_temp(weld) or is_world_drop_model(weld)
+end
+
+local function get_weld_temp_root()
+    return get_weld_temp_folder()
+end
+
+local function is_skip_weld_child(name)
+    return name == "Highlight" or name == "thermalTemplate"
+end
+
+local function grid_folder_from_model(model)
+    if not model then return nil end
+    local link = object_value_target(model, "linkItemFolder")
+    if not link then return nil end
+    local cur = link
+    for _ = 1, 10 do
+        if not cur then break end
+        if is_grid_item_folder(cur) then return cur end
+        cur = cur.Parent
+    end
+    return nil
+end
+
+local function clean_item_name(name)
+    if not name or name == "" then return nil end
+    name = name:gsub("%s*%(%d+%)$", "")
+    if name == "WeldObjects" or name == "" then return nil end
+    return name
+end
+
+local function item_name_from_model(model, grid_folder)
+    if grid_folder then
+        local grid_name = resolve_grid_folder_name(grid_folder)
+        if grid_name and grid_name ~= "" then return grid_name end
+    end
+    local resolved = resolve_drop_name(model)
+    if resolved and resolved ~= "" then return resolved end
+    return clean_item_name(model and model.Name)
+end
+
+local function register_item_drop(model, grid_folder, out, seen)
+    if not model or not env.is_valid(model) or seen[model] then return end
+    if is_player_owned(model) or is_on_viewmodel(model) or is_character_ancestor(model) then return end
+    if is_in_equipped_weld_pool(model) then return end
+
+    local name = item_name_from_model(model, grid_folder)
+    if not name or name == "" then return end
+
+    local root = resolve_drop_root(model)
+    if not root or not env.is_valid(root) then return end
+
+    local category = categorize_drop(name, grid_folder)
+    register_drop_entry(model, root, category, name, out, seen)
+end
+
+local function scan_weld_container(container, out, seen, depth)
+    if not container or not env.is_valid(container) or depth > 4 then return end
+
+    local grid_folder = grid_folder_from_model(container)
+    if grid_folder then
+        register_item_drop(container, grid_folder, out, seen)
+        return
+    end
+
+    if container.ClassName == "Model" and not is_skip_weld_child(container.Name) then
+        local name = container.Name
+        if object_value_target(container, "linkItemFolder")
+            or tier_util.is_known_item(name)
+            or tier_util.is_gun_name(name)
+            or tier_util.is_keycard(name) then
+            register_item_drop(container, nil, out, seen)
+            return
+        end
+    end
+
+    local ok, children = pcall(function() return container:GetChildren() end)
+    if not ok or not children then return end
+
+    for i = 1, #children do
+        local child = children[i]
+        if child.ClassName == "Model" then
+            register_item_drop(child, grid_folder_from_model(child), out, seen)
+        elseif child.ClassName == "Folder" or child.ClassName == "Model" then
+            scan_weld_container(child, out, seen, depth + 1)
+        end
+    end
+end
+
+local function collect_weld_temp_drops(out, seen)
+    local temp = get_weld_temp_root()
+    if not temp or not env.is_valid(temp) then return end
+
+    local ok, children = pcall(function() return temp:GetChildren() end)
+    if not ok or not children then return end
+
+    for i = 1, #children do
+        local child = children[i]
+        if not is_skip_weld_child(child.Name) then
+            scan_weld_container(child, out, seen, 0)
+        end
+    end
+end
+
 local function register_grid_drop(folder, out, seen)
     if not folder or not env.is_valid(folder) or seen[folder] then return end
-    if should_skip_drop_inst(folder) then return end
 
     local weld = object_value_target(folder, "currentWeldModel")
     if not weld or not env.is_valid(weld) then return end
-    if not is_world_drop_model(weld) then return end
+    if not weld_is_world_drop(weld) then return end
 
     local name = resolve_drop_name_from_sources(weld, folder)
     if not name or name == "" then return end
@@ -578,7 +709,7 @@ local function register_weld_drop(weld_model, out, seen)
     if should_skip_drop_inst(weld_model) then return end
     if not is_world_drop_model(weld_model) then return end
 
-    local grid_folder = find_grid_folder_for_weld(weld_model)
+    local grid_folder = grid_folder_from_model(weld_model) or find_grid_folder_for_weld(weld_model)
     if grid_folder then
         register_grid_drop(grid_folder, out, seen)
         return
@@ -622,7 +753,7 @@ local function register_drop_instance(inst, out, seen)
         return
     end
 
-    local grid_folder = find_grid_folder_for_weld(inst)
+    local grid_folder = grid_folder_from_model(inst) or find_grid_folder_for_weld(inst)
     local name = resolve_drop_name_from_sources(inst, grid_folder)
     if not name or name == "" then
         if cls == "Tool" then
@@ -664,41 +795,8 @@ local function collect_drops(container, out, seen, depth)
     end
 end
 
-local function collect_grid_world_drops(out, seen)
-    local grid = get_grid_item_folder()
-    if not grid or not env.is_valid(grid) then return end
-
-    local ok, children = pcall(function() return grid:GetChildren() end)
-    if not ok or not children then return end
-
-    for i = 1, #children do
-        scan_yield.yield()
-        local folder = children[i]
-        if folder.ClassName == "Folder" then
-            register_grid_drop(folder, out, seen)
-        end
-    end
-end
-
-local function collect_weld_temp_drops(out, seen)
-    local temp = get_weld_temp_folder()
-    if not temp or not env.is_valid(temp) then return end
-
-    local ok, children = pcall(function() return temp:GetChildren() end)
-    if not ok or not children then return end
-
-    for i = 1, #children do
-        scan_yield.yield()
-        local child = children[i]
-        if child.ClassName == "Model" then
-            register_weld_drop(child, out, seen)
-        end
-    end
-end
-
 local function collect_objects_drops_deep(out, seen)
     collect_weld_temp_drops(out, seen)
-    collect_grid_world_drops(out, seen)
 
     local folder = get_objects_folder()
     if folder and env.is_valid(folder) then
@@ -710,35 +808,67 @@ local function collect_objects_drops(out, seen)
     collect_objects_drops_deep(out, seen)
 end
 
+local function rebuild_draw_cache()
+    cache.loot = {}
+    for i = 1, #M._static do
+        cache.loot[#cache.loot + 1] = M._static[i]
+    end
+    for i = 1, #M._drops do
+        cache.loot[#cache.loot + 1] = M._drops[i]
+    end
+    loot_cache = cache.loot
+    if loot_live_cursor > #loot_cache then
+        loot_live_cursor = 1
+    end
+end
+
+local function split_static_drops(list)
+    local static_out = {}
+    local drops_out = {}
+    for i = 1, #list do
+        local entry = list[i]
+        if entry.is_drop then
+            drops_out[#drops_out + 1] = entry
+        else
+            static_out[#static_out + 1] = entry
+        end
+    end
+    return static_out, drops_out
+end
+
+local drop_live_cursor = 1
+local static_bounds_cursor = 1
+
+function M.tick_static_bounds(batch)
+    batch = batch or constants.LOOT_PRUNE_BATCH or 8
+    if #M._static == 0 then return end
+
+    local esp_scan = July.require("game.esp_scan")
+    local n = #M._static
+    if static_bounds_cursor > n then static_bounds_cursor = 1 end
+
+    for _ = 1, math.min(batch, n) do
+        local entry = M._static[static_bounds_cursor]
+        if entry and not entry.is_drop and env.is_valid(entry.model) then
+            esp_scan.refresh_entry_bounds(entry)
+        end
+        static_bounds_cursor = static_bounds_cursor + 1
+        if static_bounds_cursor > n then static_bounds_cursor = 1 end
+    end
+end
+
 local function preserve_drops(out)
-    for i = 1, #loot_cache do
-        local entry = loot_cache[i]
-        if entry.is_drop and env.is_valid(entry.model) and env.is_valid(entry.root) then
+    for i = 1, #M._drops do
+        local entry = M._drops[i]
+        if entry and entry.is_drop and drop_entry_alive(entry) then
             out[#out + 1] = entry
         end
     end
 end
 
 local function merge_drop_cache(new_drops)
-    local kept = {}
-    for i = 1, #loot_cache do
-        if not loot_cache[i].is_drop then
-            kept[#kept + 1] = loot_cache[i]
-        end
-    end
-    for i = 1, #new_drops do
-        kept[#kept + 1] = new_drops[i]
-    end
-
-    local new_by_model = {}
-    for i = 1, #kept do
-        new_by_model[kept[i].model] = kept[i]
-    end
-    loot_by_model = new_by_model
-    loot_cache = kept
-    if loot_live_cursor > #loot_cache then
-        loot_live_cursor = 1
-    end
+    M._drops = new_drops or {}
+    rebuild_draw_cache()
 end
 
 local function collect_loot(container, out, depth)
@@ -883,15 +1013,17 @@ function M.refresh(force)
 
     preserve_drops(out)
 
+    local static_out, drops_in_scan = split_static_drops(out)
+    M._static = static_out
+    M._drops = drops_in_scan
+
     local new_by_model = {}
-    for i = 1, #out do
-        new_by_model[out[i].model] = out[i]
+    rebuild_draw_cache()
+    for i = 1, #loot_cache do
+        new_by_model[loot_cache[i].model] = loot_cache[i]
     end
     loot_by_model = new_by_model
-    loot_cache = out
-    if loot_live_cursor > #loot_cache then
-        loot_live_cursor = 1
-    end
+    cache.stats.last_loot_scan = utility and utility.get_tick_count and utility.get_tick_count() or 0
 end
 
 function M.refresh_drops(force)
@@ -899,12 +1031,84 @@ function M.refresh_drops(force)
     if not force and (now - drop_cache_stamp) < constants.DROP_SCAN_INTERVAL then return end
     drop_cache_stamp = now
 
-    rebuild_grid_weld_lookup()
-
     local out = {}
     local seen = {}
-    collect_objects_drops(out, seen)
+    collect_objects_drops_deep(out, seen)
     merge_drop_cache(out)
+end
+
+function M.begin_drops_scan()
+    return { ci = 1, children = nil, seen = {}, out = {} }
+end
+
+function M.step_drops_scan(state, batch)
+    if not state.children then
+        state.children = {}
+        local temp = get_weld_temp_root()
+        if temp and env.is_valid(temp) then
+            local ok, kids = pcall(function() return temp:GetChildren() end)
+            if ok and kids then state.children = kids end
+        end
+        state.ci = 1
+    end
+
+    local processed = 0
+    while processed < batch and state.ci <= #state.children do
+        local child = state.children[state.ci]
+        state.ci = state.ci + 1
+        processed = processed + 1
+        if child and env.is_valid(child) and not is_skip_weld_child(child.Name) then
+            scan_weld_container(child, state.out, state.seen, 0)
+        end
+    end
+
+    if state.ci <= #state.children then
+        return false
+    end
+
+    if not state.objects_done then
+        state.objects_done = true
+        local folder = get_objects_folder()
+        if folder and env.is_valid(folder) then
+            collect_drops(folder, state.out, state.seen, 0)
+        end
+    end
+
+    return true
+end
+
+function M.complete_drops_scan(state)
+    merge_drop_cache(state.out or {})
+    drop_cache_stamp = os.clock()
+end
+
+function M.begin_static_scan()
+    return { co = coroutine.create(function()
+        M.refresh(true)
+    end) }
+end
+
+function M.step_static_scan(state, batch)
+    if not state or not state.co then return true end
+    if coroutine.status(state.co) == "dead" then return true end
+
+    local scan_async = July.require("core.scan_async")
+    local budget = math.max(2, math.floor((constants.SCAN_BUDGET_MS or 4) * 0.75))
+    for _ = 1, math.max(1, math.floor(batch / 6)) do
+        if scan_async.tick(state.co, budget) then
+            return true
+        end
+    end
+    return coroutine.status(state.co) == "dead"
+end
+
+function M.complete_static_scan(state)
+    local new_by_model = {}
+    for i = 1, #loot_cache do
+        new_by_model[loot_cache[i].model] = loot_cache[i]
+    end
+    loot_by_model = new_by_model
+    cache.stats.last_loot_scan = utility and utility.get_tick_count and utility.get_tick_count() or 0
 end
 
 function M.compact_invalid(force)
@@ -913,24 +1117,15 @@ function M.compact_invalid(force)
     if not force and (now - last_compact) < interval then return end
     last_compact = now
 
-    local i, n = 1, #loot_cache
-    while i <= n do
-        local loot = loot_cache[i]
-        if not loot or not env.is_valid(loot.model) or not env.is_valid(loot.root) then
-            if loot and loot.model then
-                loot_by_model[loot.model] = nil
-            end
-            loot_cache[i] = loot_cache[n]
-            loot_cache[n] = nil
-            n = n - 1
-        else
-            i = i + 1
-        end
-    end
+    cache.prune_invalid(M._static)
+    cache.prune_invalid(M._drops)
+    rebuild_draw_cache()
 
-    if loot_live_cursor > n then
-        loot_live_cursor = 1
+    local new_by_model = {}
+    for i = 1, #loot_cache do
+        new_by_model[loot_cache[i].model] = loot_cache[i]
     end
+    loot_by_model = new_by_model
 end
 
 local function combat_active()
@@ -938,33 +1133,48 @@ local function combat_active()
         and settings.enabled("havoc_aimbot_keybind")
 end
 
-function M.refresh_live()
+-- April-style: prune + refresh static positions on interval.
+function M.tick_cache()
+    if cache.should_refresh_positions(combat_active()) then
+        cache.prune_invalid(M._static)
+        cache.prune_invalid(M._drops)
+        rebuild_draw_cache()
+    end
+end
+
+local drop_pos_cursor = 1
+
+function M.tick_drop_positions(batch)
+    batch = batch or constants.DROP_LIVE_BATCH or 24
+    local n = #M._drops
+    if n == 0 then return end
+
+    local esp_scan = July.require("game.esp_scan")
+    if drop_pos_cursor > n then drop_pos_cursor = 1 end
+
+    for _ = 1, math.min(batch, n) do
+        local entry = M._drops[drop_pos_cursor]
+        if entry and drop_entry_alive(entry) then
+            esp_scan.refresh_entry_position(entry)
+        end
+        drop_pos_cursor = drop_pos_cursor + 1
+        if drop_pos_cursor > n then drop_pos_cursor = 1 end
+    end
+end
+
+function M.tick_drops_live(batch)
+    M.tick_drop_positions(batch)
+end
+
+-- Batched door/crate open state only — cheap between position refreshes.
+function M.tick_live_state()
     local n = #loot_cache
     if n == 0 then return end
 
     if loot_live_cursor > n then loot_live_cursor = 1 end
 
-    local prune_batch = constants.LOOT_PRUNE_BATCH or 24
-    local pruned = 0
-    while pruned < prune_batch and n > 0 do
-        if loot_live_cursor > n then loot_live_cursor = 1 end
-        local loot = loot_cache[loot_live_cursor]
-        if not loot or not env.is_valid(loot.model) or not env.is_valid(loot.root) then
-            if loot and loot.model then
-                loot_by_model[loot.model] = nil
-            end
-            loot_cache[loot_live_cursor] = loot_cache[n]
-            loot_cache[n] = nil
-            n = n - 1
-        else
-            loot_live_cursor = loot_live_cursor + 1
-        end
-        pruned = pruned + 1
-    end
-
-    local refresh_pos = cache.should_refresh_positions(combat_active())
-    local remaining = math.min(constants.LOOT_LIVE_BATCH_SIZE, n)
-    while remaining > 0 do
+    local batch = math.min(constants.LOOT_LIVE_BATCH_SIZE or 24, n)
+    for _ = 1, batch do
         local loot = loot_cache[loot_live_cursor]
         if loot and env.is_valid(loot.model) and env.is_valid(loot.root) then
             if not loot.is_drop and loot.is_open_inst and env.is_valid(loot.is_open_inst) then
@@ -983,16 +1193,15 @@ function M.refresh_live()
                     end
                 end
             end
-            if refresh_pos and loot.is_drop then
-                local esp_scan = July.require("game.esp_scan")
-                esp_scan.refresh_entry_position(loot)
-            end
         end
 
         loot_live_cursor = loot_live_cursor + 1
         if loot_live_cursor > n then loot_live_cursor = 1 end
-        remaining = remaining - 1
     end
+end
+
+function M.refresh_live()
+    M.tick_live_state()
 end
 
 local static_co = nil
@@ -1004,7 +1213,10 @@ function M.invalidate()
     grid_weld_lookup = nil
     grid_weld_lookup_stamp = -9999
     loot_by_model = {}
+    M._static = {}
+    M._drops = {}
     loot_cache = {}
+    cache.loot = {}
     loot_cache_stamp = -9998
     drop_cache_stamp = -9996
     loot_live_cursor = 1
@@ -1041,7 +1253,11 @@ function M.tick_async(budget_ms)
 end
 
 function M.get_cache()
-    return loot_cache
+    return cache.loot
+end
+
+function M.get_drops()
+    return M._drops
 end
 
 return M

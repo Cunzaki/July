@@ -6,6 +6,8 @@ local entity_scan = July.require("game.entity_scan")
 local targeting = July.require("features.combat.targeting")
 local aimbot = July.require("features.combat.aimbot")
 local env = July.require("core.env")
+local havoc_icons = July.require("game.havoc_icons")
+local image_cache = July.require("core.image_cache")
 
 local M = {}
 
@@ -21,16 +23,10 @@ local last_poll_ms = 0
 M._target = nil
 M._layout = nil
 
-local PANEL_BG = { 0.06, 0.06, 0.08, 0.82 }
-local PANEL_EDGE = { 1, 1, 1, 0.1 }
-local HELD_BG = { 0.45, 0.1, 0.12, 0.92 }
-local HELD_EDGE = { 0.95, 0.28, 0.32, 0.75 }
-local ITEM_BG = { 0.14, 0.14, 0.16, 0.88 }
-local ITEM_EDGE = { 1, 1, 1, 0.08 }
-local SLOT_MUTED = { 0.5, 0.5, 0.54, 0.85 }
-local TEXT_MAIN = { 0.94, 0.94, 0.96, 1 }
-local TEXT_DIM = { 0.55, 0.55, 0.58, 0.9 }
-local ROUND = 6
+local TEXT_MAIN = { 0.96, 0.96, 0.98, 1 }
+local TEXT_DIM = { 0.58, 0.58, 0.62, 0.92 }
+local SLOT_MUTED = { 0.62, 0.62, 0.66, 0.88 }
+local HELD_TINT = { 1.0, 0.42, 0.45, 1.0 }
 
 local SLOT_LABELS = {
     helmet = "Helmet",
@@ -252,15 +248,17 @@ local function build_layout(gear)
     local stash = is_npc and {} or pack_stash(gear and gear.stash)
 
     local rows = {}
-    local panel_w = 220
+    local icon_size = settings.num(P .. "_gear_size", 48)
+    local row_h = math.max(18, icon_size * 0.42)
 
     if held then
         rows[#rows + 1] = {
             kind = "held",
             label = "Held",
             text = piece_label(held) or "Unknown",
+            piece = held,
+            row_h = row_h + 2,
         }
-        panel_w = math.max(panel_w, text_w(rows[#rows].text, 11) + 56)
     end
 
     if not is_npc then
@@ -268,87 +266,46 @@ local function build_layout(gear)
             local slot_id = order[i]
             local piece = slots[slot_id]
             if piece then
-                local text = piece_label(piece) or "Unknown"
                 rows[#rows + 1] = {
                     kind = "gear",
                     label = SLOT_LABELS[slot_id] or slot_id,
-                    text = text,
+                    text = piece_label(piece) or "Unknown",
+                    piece = piece,
+                    row_h = row_h,
                 }
-                panel_w = math.max(panel_w, text_w(text, 10) + 88)
             end
         end
 
         for i = 1, #extra do
-            local text = piece_label(extra[i]) or "Unknown"
+            local piece = extra[i]
             rows[#rows + 1] = {
                 kind = "gear",
                 label = "Extra",
-                text = text,
+                text = piece_label(piece) or "Unknown",
+                piece = piece,
+                row_h = row_h,
             }
-            panel_w = math.max(panel_w, text_w(text, 10) + 88)
         end
 
         for i = 1, #stash do
-            local text = piece_label(stash[i]) or "Unknown"
+            local piece = stash[i]
             rows[#rows + 1] = {
                 kind = "stash",
                 label = "Bag",
-                text = text,
+                text = piece_label(piece) or "Unknown",
+                piece = piece,
+                row_h = row_h,
             }
-            panel_w = math.max(panel_w, text_w(text, 10) + 72)
         end
     end
 
     return {
         is_npc = is_npc,
         rows = rows,
-        panel_w = math.min(math.max(panel_w, 200), 420),
+        icon_size = icon_size,
+        row_h = row_h,
         has_held = held ~= nil,
     }
-end
-
-local function draw_pill(x, y, w, h, bg, edge)
-    draw.rect_filled(x, y, w, h, bg, ROUND)
-    if draw.rect and edge then
-        draw.rect(x, y, w, h, edge, ROUND, 1)
-    end
-end
-
-local function draw_row(cx, y, row, panel_w)
-    local pad_x = 10
-    local row_h = row.kind == "held" and 26 or 22
-    local label_fs = row.kind == "held" and 10 or 9
-    local text_fs = row.kind == "held" and 11 or 10
-    local row_w = panel_w
-    local row_x = cx - row_w * 0.5
-
-    local bg = ITEM_BG
-    local edge = ITEM_EDGE
-    if row.kind == "held" then
-        bg = HELD_BG
-        edge = HELD_EDGE
-    end
-
-    draw_pill(row_x, y, row_w, row_h, bg, edge)
-
-    local label = row.label .. ":"
-    draw.text(row_x + pad_x, y + (row_h - label_fs) * 0.5, label, SLOT_MUTED, label_fs)
-
-    local label_w = text_w(label, label_fs)
-    local text = row.text
-    local tw = text_w(text, text_fs)
-    local max_text_w = row_w - pad_x * 2 - label_w - 8
-    if tw > max_text_w and #text > 3 then
-        while tw > max_text_w and #text > 3 do
-            text = text:sub(1, #text - 1)
-            tw = text_w(text .. "…", text_fs)
-        end
-        text = text .. "…"
-        tw = text_w(text, text_fs)
-    end
-
-    draw.text(row_x + row_w - pad_x - tw, y + (row_h - text_fs) * 0.5, text, TEXT_MAIN, text_fs)
-    return row_h + 4
 end
 
 local function same_target(a, b)
@@ -366,7 +323,41 @@ local function target_display_name(target)
     return p.display_name or p.DisplayName or p.Name or p.name or "Player"
 end
 
-function M.register_menu()
+local function draw_icon(x, y, size, piece)
+    if not piece or not piece.name then return 0 end
+    local asset_id = havoc_icons.lookup(piece.name, piece.variant)
+    if not asset_id then return 0 end
+    local key = "gear_" .. tostring(asset_id)
+    image_cache.ensure(key, asset_id)
+    if image_cache.draw_fit(key, x, y, size, size) then
+        return size + 6
+    end
+    return 0
+end
+
+local function draw_row(cx, y, row, layout)
+    local icon_size = layout.icon_size
+    local row_h = row.row_h or layout.row_h
+    local label_fs = row.kind == "held" and 10 or 9
+    local text_fs = row.kind == "held" and 12 or 11
+    local label_col = row.kind == "held" and HELD_TINT or SLOT_MUTED
+    local text_col = TEXT_MAIN
+
+    local text = row.text
+    local tw = text_w(text, text_fs)
+    local total_w = icon_size + 8 + tw + 40
+    local start_x = cx - total_w * 0.5
+
+    local icon_off = draw_icon(start_x, y + (row_h - icon_size) * 0.5, icon_size, row.piece)
+    local text_x = start_x + (icon_off > 0 and icon_off or icon_size + 6)
+
+    draw.text(text_x, y + (row_h - text_fs) * 0.5, text, text_col, text_fs)
+
+    local label = row.label
+    local lw = text_w(label, label_fs)
+    draw.text(text_x + tw + 10, y + (row_h - label_fs) * 0.5, label, label_col, label_fs)
+
+    return row_h + 6
 end
 
 function M.refresh_target()
@@ -416,7 +407,7 @@ end
 
 function M.draw()
     if not settings.bool(P, false) then return end
-    if not draw or not draw.text or not draw.rect_filled then return end
+    if not draw or not draw.text then return end
 
     local target = M._target
     local layout = M._layout
@@ -425,36 +416,22 @@ function M.draw()
     local sw, _ = screen_size()
     local top = settings.num(P .. "_top", 88)
     local cx = sw * 0.5
-    local name_fs = 12
     local name = target_display_name(target)
-    local panel_w = layout.panel_w
-    local header_h = name_fs + 14
-    local rows_h = 0
-    for i = 1, #layout.rows do
-        rows_h = rows_h + (layout.rows[i].kind == "held" and 30 or 26)
-    end
-    if #layout.rows == 0 then
-        rows_h = 22
-    end
-    local panel_h = header_h + rows_h + 10
-    local panel_x = cx - panel_w * 0.5
-    local panel_y = top
-
-    draw_pill(panel_x, panel_y, panel_w, panel_h, PANEL_BG, PANEL_EDGE)
+    local name_fs = 13
 
     local nw = text_w(name, name_fs)
-    draw.text(cx - nw * 0.5, panel_y + 6, name, TEXT_MAIN, name_fs)
+    draw.text(cx - nw * 0.5, top, name, TEXT_MAIN, name_fs)
 
-    local y = panel_y + header_h
+    local y = top + name_fs + 10
     if #layout.rows == 0 then
         local hint = layout.is_npc and "No held weapon" or "No gear detected"
         local hw = text_w(hint, 10)
-        draw.text(cx - hw * 0.5, y + 4, hint, TEXT_DIM, 10)
+        draw.text(cx - hw * 0.5, y, hint, TEXT_DIM, 10)
         return
     end
 
     for i = 1, #layout.rows do
-        y = y + draw_row(cx, y, layout.rows[i], panel_w - 16)
+        y = y + draw_row(cx, y, layout.rows[i], layout)
     end
 end
 

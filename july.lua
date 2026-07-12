@@ -1,5 +1,11 @@
+--[[
+    July - Havoc for Project Vector
+    https://github.com/Cunzaki/July
+    Built: 2026-07-12T09:33:26.255Z
+]]
+
 July = {
-    version = "0.10.1",
+    version = "0.13.0",
     debug = false,
     _mods = {},
     bundled = true,
@@ -18,6 +24,8 @@ function July.require(path)
     return mod
 end
 
+
+-- ── core/constants.lua ──
 July._mods["core.constants"] = (function()
 local M = {}
 
@@ -32,7 +40,7 @@ M.BOUNDS_UPDATE_INTERVAL = 3
 M.SCAN_YIELD_EVERY = 24
 M.SCAN_BUDGET_MS = 4
 M.ENTITY_SCAN_INTERVAL = 1.0
-M.ENTITY_LIVE_BATCH_SIZE = 20
+M.ENTITY_LIVE_BATCH_SIZE = 24
 M.NPC_BOUNDS_BATCH = 8
 M.NPC_CHAMS_BUDGET = 6
 M.FOLDER_POLL_INTERVAL = 0.25
@@ -45,7 +53,8 @@ M.LOOT_PRUNE_BATCH = 24
 M.LOOT_COMPACT_INTERVAL = 8.0
 M.LOOT_MAX_PARTS = 6
 M.DROP_SCAN_DEPTH = 4
-M.DROP_SCAN_INTERVAL = 3.5
+M.DROP_SCAN_INTERVAL = 2.0
+M.DROP_LIVE_BATCH = 24
 M.TRAP_LIVE_BATCH = 16
 
 M.TRAP_SCAN_DEPTH = 8
@@ -58,21 +67,22 @@ M.LOOT_MARKER_RADIUS = 3
 M.LOOT_MARKER_GAP = 8
 
 M.ESP_HIDE_SQ = 9
-M.ESP_RENDER_BUDGET = 100
-M.ESP_POS_CACHE_MS = 200
-M.ESP_POS_CACHE_COMBAT_MS = 50
+M.ESP_RENDER_BUDGET = 80
+M.ESP_POS_CACHE_MS = 750
+M.ESP_POS_CACHE_COMBAT_MS = 200
 
 M.SKELETON_OUTLINE_COLOR = { 0, 0, 0, 0.78 }
 
 M.NPC_BOSS_NAMES = {
-    Boris = true, Bruno = true, Brutus = true, Tagilla = true,
-    Ranger = true, Clutch = true, Kodiak = true, Vandal = true, Grizzly = true,
-    Crossfire = true, Warlock = true, Stalemate = true, Lynx = true, Hawk = true,
-    Talon = true, Volt = true, Dagger = true, Spartan = true, Cipher = true,
-    Maverick = true, Falcon = true,
-    Scorch = true, Raptor = true, Knox = true, Fox = true, Bullet = true,
-    Zero = true, Cobra = true, Ghost = true, Shade = true, Checkmate = true,
-    Mamba = true, Phoenix = true, Anvil = true, Gunner = true,
+    Anvil = true, Boris = true, Breaker = true, Bruno = true, Brutus = true,
+    Bullet = true, Cervus = true, Charger = true, Checkmate = true, Cipher = true,
+    Clutch = true, Cobra = true, Crossfire = true, Dagger = true, Falcon = true,
+    Fox = true, Ghost = true, Grizzly = true, Gunner = true, Hawk = true,
+    Ironclad = true, Kingslayer = true, Knox = true, Kodiak = true, Lockstep = true,
+    Lynx = true, Mamba = true, Maverick = true, Omen = true, Phantom = true,
+    Phoenix = true, Queensguard = true, Ranger = true, Raptor = true, Scorch = true,
+    Shade = true, Spartan = true, Stalemate = true, Tagilla = true, Talon = true,
+    Vandal = true, Volt = true, Warlock = true, Wolf = true, Zero = true,
 }
 
 M.BONE_NAMES = {
@@ -108,6 +118,7 @@ return M
 
 end)()
 
+-- ── core/env.lua ──
 July._mods["core.env"] = (function()
 local M = {}
 
@@ -155,6 +166,7 @@ return M
 
 end)()
 
+-- ── core/debug.lua ──
 July._mods["core.debug"] = (function()
 local M = {}
 
@@ -215,6 +227,7 @@ return M
 
 end)()
 
+-- ── core/settings.lua ──
 July._mods["core.settings"] = (function()
 local M = {}
 
@@ -286,12 +299,25 @@ function M.color(id, default)
     return color_util.normalize_rgba(default, { 1, 1, 1, 1 })
 end
 
+local function as_bool(v, default)
+    if v == nil then return default == true end
+    if v == false or v == 0 or v == "false" or v == "0" then return false end
+    return v == true or v == 1 or v == "true" or v == "1"
+end
+
 function M.multicombo_get(id, index, default)
     local vals = M.get(id, nil)
-    if type(vals) ~= "table" then return default end
+    if type(vals) ~= "table" then return default == true end
     local v = vals[index]
-    if v == nil then return default end
-    return v == true
+    if v == nil and index >= 1 then
+        v = vals[index - 1]
+    end
+    return as_bool(v, default)
+end
+
+-- Alias used by GPU chams / April-style multicombos (1-based index).
+function M.multi(id, index, default)
+    return M.multicombo_get(id, index, default)
 end
 
 function M.on_change(id, fn)
@@ -311,13 +337,21 @@ return M
 
 end)()
 
+-- ── core/cache.lua ──
 July._mods["core.cache"] = (function()
 local constants = July.require("core.constants")
 
 local M = {}
 
+M.loot = {}
+M.traps = {}
+M.stats = {
+    last_loot_scan = 0,
+    last_trap_scan = 0,
+}
+
 M.WORKSPACE_SCAN_MS = 1000
-M.POS_CACHE_MS = 250
+M.POS_CACHE_MS = 1000
 M._last_pos_cache = 0
 
 local function tick_ms()
@@ -325,7 +359,16 @@ local function tick_ms()
 end
 
 function M.should_refresh_positions(combat_active)
-    local interval = combat_active and constants.ESP_POS_CACHE_COMBAT_MS or M.POS_CACHE_MS
+    local interval = M.POS_CACHE_MS
+    if combat_active then
+        interval = math.min(interval, constants.ESP_POS_CACHE_COMBAT_MS or 250)
+    else
+        interval = constants.ESP_POS_CACHE_MS or interval
+    end
+    if interval <= 0 then
+        interval = M.POS_CACHE_MS
+    end
+
     local now = tick_ms()
     if now - M._last_pos_cache >= interval then
         M._last_pos_cache = now
@@ -334,14 +377,52 @@ function M.should_refresh_positions(combat_active)
     return false
 end
 
+function M.clear_bucket(bucket)
+    if not bucket then return end
+    for k in pairs(bucket) do
+        bucket[k] = nil
+    end
+end
+
+-- Compact array ESP lists between workspace rescans (April pattern).
+function M.prune_invalid(list)
+    if not list or #list == 0 then return 0 end
+    local env = July.require("core.env")
+    local write = 1
+    for read = 1, #list do
+        local entry = list[read]
+        local inst = entry and (entry.inst or entry.model)
+        local alive = entry and inst and env.is_valid(inst)
+        if entry and entry.is_drop then
+            alive = (entry.root and env.is_valid(entry.root))
+                or (entry.inst and env.is_valid(entry.inst))
+        end
+        if entry and alive then
+            if write ~= read then
+                list[write] = entry
+            end
+            write = write + 1
+        end
+    end
+    for i = write, #list do
+        list[i] = nil
+    end
+    return write - 1
+end
+
 function M.reset()
     M._last_pos_cache = 0
+    M.clear_bucket(M.loot)
+    M.clear_bucket(M.traps)
+    M.stats.last_loot_scan = 0
+    M.stats.last_trap_scan = 0
 end
 
 return M
 
 end)()
 
+-- ── core/session.lua ──
 July._mods["core.session"] = (function()
 local env = July.require("core.env")
 local cache = July.require("core.cache")
@@ -443,8 +524,8 @@ return M
 
 end)()
 
+-- ── core/feature_bind.lua ──
 July._mods["core.feature_bind"] = (function()
-
 local settings = July.require("core.settings")
 
 local M = {}
@@ -565,8 +646,8 @@ return M
 
 end)()
 
+-- ── core/menu_util.lua ──
 July._mods["core.menu_util"] = (function()
-
 local M = {}
 
 M.TAB = "July"
@@ -575,8 +656,9 @@ M.G = {
     AIMBOT = "Aimbot",
     NPC = "NPC Visuals",
     LOOT = "Loot ESP",
+    ITEMS = "Item ESP",
     TRAP = "Trap ESP",
-    WORLD = "World Visuals",
+    MISC = "Misc",
     CONFIG = "Config",
 }
 
@@ -605,8 +687,9 @@ function M.ensure_groups()
 
     local rows = {
         { M.G.AIMBOT, M.G.NPC },
-        { M.G.LOOT, M.G.TRAP },
-        { M.G.WORLD, M.G.CONFIG },
+        { M.G.LOOT, M.G.ITEMS },
+        { M.G.TRAP, M.G.MISC },
+        { M.G.CONFIG },
     }
 
     for _, row in ipairs(rows) do
@@ -709,6 +792,7 @@ M.COLOR_DEFAULTS = {
     havoc_npc_skeleton = { 1.0, 1.0, 1.0, 1.0 },
     havoc_loot_box = { 1.0, 1.0, 1.0, 1.0 },
     havoc_trap_box = { 1.0, 0.35, 0.25, 1.0 },
+    havoc_item_box = { 1.0, 1.0, 1.0, 1.0 },
     havoc_local_ammo = { 0.55, 0.85, 1.0, 1.0 },
     havoc_local_reloading = { 1.0, 0.45, 0.2, 1.0 },
 }
@@ -821,6 +905,7 @@ return M
 
 end)()
 
+-- ── core/math_util.lua ──
 July._mods["core.math_util"] = (function()
 local M = {}
 
@@ -846,6 +931,7 @@ return M
 
 end)()
 
+-- ── core/color_util.lua ──
 July._mods["core.color_util"] = (function()
 local M = {}
 
@@ -906,6 +992,7 @@ return M
 
 end)()
 
+-- ── core/scan_yield.lua ──
 July._mods["core.scan_yield"] = (function()
 local constants = July.require("core.constants")
 
@@ -928,6 +1015,7 @@ return M
 
 end)()
 
+-- ── core/scan_async.lua ──
 July._mods["core.scan_async"] = (function()
 local M = {}
 
@@ -956,6 +1044,111 @@ return M
 
 end)()
 
+-- ── core/incremental_scan.lua ──
+July._mods["core.incremental_scan"] = (function()
+local debug = July.require("core.debug")
+
+local M = {}
+
+local jobs = {}
+local BUDGET_MS = 6
+local ITEMS_PER_STEP = 18
+local MAX_STARTS_PER_TICK = 1
+local starts_this_tick = 0
+
+local function tick_ms()
+    return utility and utility.get_tick_count and utility.get_tick_count() or 0
+end
+
+function M.configure(opts)
+    if not opts then return end
+    if opts.budget_ms then BUDGET_MS = opts.budget_ms end
+    if opts.items_per_step then ITEMS_PER_STEP = opts.items_per_step end
+end
+
+function M.register(id, interval_ms, when_fn, create_state_fn, step_fn, complete_fn, phase_ms)
+    jobs[id] = {
+        id = id,
+        interval = interval_ms,
+        last_done = tick_ms() - (interval_ms - (phase_ms or 0)),
+        when = when_fn,
+        create_state = create_state_fn,
+        step = step_fn,
+        complete = complete_fn,
+        active = false,
+        state = nil,
+    }
+end
+
+function M.is_active(id)
+    local job = jobs[id]
+    return job and job.active == true
+end
+
+function M.force(id)
+    local job = jobs[id]
+    if not job then return end
+    job.last_done = 0
+    job.active = false
+    job.state = nil
+end
+
+function M.tick()
+    starts_this_tick = 0
+    local budget_left = BUDGET_MS
+    local now = tick_ms()
+
+    for id, job in pairs(jobs) do
+        if budget_left <= 0 then break end
+
+        if job.when then
+            local ok, pass = pcall(job.when)
+            if not ok or not pass then
+                job.active = false
+                job.state = nil
+                goto continue
+            end
+        end
+
+        if job.active and job.state then
+            while budget_left > 0 do
+                local t0 = tick_ms()
+                local ok, done = pcall(job.step, job.state, ITEMS_PER_STEP)
+                if not ok then
+                    debug.error_once("iscan:" .. id, done)
+                    job.active = false
+                    job.state = nil
+                    job.last_done = now
+                    break
+                end
+
+                budget_left = budget_left - (tick_ms() - t0)
+
+                if done then
+                    pcall(job.complete, job.state)
+                    job.active = false
+                    job.state = nil
+                    job.last_done = now
+                    break
+                end
+
+                if budget_left <= 0 then break end
+            end
+        elseif now - job.last_done >= job.interval and starts_this_tick < MAX_STARTS_PER_TICK then
+            job.state = job.create_state and job.create_state() or {}
+            job.active = true
+            starts_this_tick = starts_this_tick + 1
+        end
+
+        ::continue::
+    end
+end
+
+return M
+
+end)()
+
+-- ── core/draw_util.lua ──
 July._mods["core.draw_util"] = (function()
 local constants = July.require("core.constants")
 local color_util = July.require("core.color_util")
@@ -1173,6 +1366,14 @@ end
 
 function M.draw_root_3d_box(root, color)
     if not root then return end
+    local esp_scan = July.require("game.esp_scan")
+    local esp_util = July.require("core.esp_util")
+    local box = esp_scan.read_part_box(root)
+    if box then
+        esp_util.draw_oriented_box(box, color, 1)
+        return
+    end
+
     local ok_pos, pos = pcall(function() return root.Position end)
     local ok_size, size = pcall(function() return root.Size end)
     if not ok_pos or not ok_size or not pos then return end
@@ -1313,6 +1514,1233 @@ return M
 
 end)()
 
+-- ── core/gpu_chams.lua ──
+July._mods["core.gpu_chams"] = (function()
+-- GPU instance chams with a double-buffer applied set.
+--
+-- front (owner.applied) = addresses currently stamped by the engine
+-- back  (fresh collect) = addresses that SHOULD be chammed this tick (in-range only)
+--
+-- If back == front → no work (or only apply brand-new addrs).
+-- If any addr left back → RevertChams + re-apply ONLY back (all active owners).
+-- That is the "double buffer": never leave stale out-of-range instances chammed.
+--
+-- Range is fail-closed: without a local player position, collect applies nothing.
+
+local settings = July.require("core.settings")
+local env = July.require("core.env")
+
+local M = {}
+
+M.MODE_LABELS = { "Fill", "Wireframe", "Fill Glow", "Wireframe Glow" }
+M.COLOR_LABELS = { "Default", "Red", "Green", "Yellow", "Blue", "Magenta", "Cyan" }
+
+local PART_CLASSES = {
+    Part = true,
+    MeshPart = true,
+    WedgePart = true,
+    CornerWedgePart = true,
+    TrussPart = true,
+    UnionOperation = true,
+    NegateOperation = true,
+}
+
+local owners = {}
+local owner_order = {}
+local rebuild_busy = false
+local last_global_rebuild = 0
+local MIN_REBUILD_GAP_MS = 250
+
+function M.available()
+    return exploits ~= nil
+        and type(exploits.ApplyChamsToInstance) == "function"
+        and type(exploits.RevertChams) == "function"
+        and type(exploits.SetChamsMode) == "function"
+        and type(exploits.SetChamsColor) == "function"
+end
+
+function M.is_part(inst)
+    if not inst then return false end
+    local cn = inst.ClassName or inst.class_name
+    if PART_CLASSES[cn] then return true end
+    return env.safe_call(function()
+        if inst.is_a then return inst:is_a("BasePart") end
+        if inst.IsA then return inst:IsA("BasePart") end
+        return false
+    end) == true
+end
+
+function M.instance_addr(inst)
+    if not inst then return nil end
+    return inst.Address or inst.address
+end
+
+function M.color_visible_for_mode(mode)
+    mode = tonumber(mode) or 0
+    return mode == 2 or mode == 3
+end
+
+function M.mode_index(id, default)
+    return settings.combo_index(id, M.MODE_LABELS, default or 0)
+end
+
+function M.color_index(id, default)
+    return settings.combo_index(id, M.COLOR_LABELS, default or 0)
+end
+
+function M.multicombo_selected(id, index)
+    return settings.multi(id, index, false)
+end
+
+function M.multicombo_defaults(count)
+    local out = {}
+    for i = 1, count do
+        out[i] = false
+    end
+    return out
+end
+
+local function now_ms()
+    return utility and utility.get_tick_count and utility.get_tick_count() or 0
+end
+
+local function push_style(mode, color)
+    pcall(function() exploits.SetChamsMode(mode or 0) end)
+    pcall(function() exploits.SetChamsColor(color or 0) end)
+end
+
+local function any_other_active(except_id)
+    for _, oid in ipairs(owner_order) do
+        local o = owners[oid]
+        if o and oid ~= except_id and o.is_active() then
+            return true
+        end
+    end
+    return false
+end
+
+local function sets_equal(a, b)
+    for k in pairs(a) do
+        if not b[k] then return false end
+    end
+    for k in pairs(b) do
+        if not a[k] then return false end
+    end
+    return true
+end
+
+local function has_removed(prev, fresh)
+    for addr in pairs(prev) do
+        if not fresh[addr] then return true end
+    end
+    return false
+end
+
+local function apply_one(inst, applied)
+    if not M.available() or not inst then return false end
+    if not M.is_part(inst) then return false end
+    local addr = M.instance_addr(inst)
+    if not addr then return false end
+    if applied[addr] then return true end
+    local ok, result = pcall(exploits.ApplyChamsToInstance, inst)
+    -- Some builds return nil on success; only treat explicit false as failure.
+    if ok and result ~= false then
+        applied[addr] = true
+        return true
+    end
+    return false
+end
+
+function M.cham_part(inst, applied)
+    return apply_one(inst, applied or {})
+end
+
+-- Fallen R15: body MeshParts + nested armor copies under skin Models (dump).
+local PLAYER_CHAM_NAMES = {
+    Head = true, UpperTorso = true, LowerTorso = true, Torso = true,
+    LeftUpperArm = true, RightUpperArm = true, LeftLowerArm = true, RightLowerArm = true,
+    LeftHand = true, RightHand = true,
+    LeftUpperLeg = true, RightUpperLeg = true, LeftLowerLeg = true, RightLowerLeg = true,
+    LeftFoot = true, RightFoot = true,
+    Armor = true, -- clothing layer MeshParts under Default/Abibas models
+}
+
+local PLAYER_CHAM_SKIP = {
+    HumanoidRootPart = true,
+    CollisionPart = true,
+}
+
+function M.cham_player_character(char, applied)
+    if not char or not env.is_valid(char) then return 0 end
+    applied = applied or {}
+
+    local list = env.safe_call(function()
+        if char.get_descendants then return char:get_descendants() end
+        return char:GetDescendants()
+    end) or {}
+
+    local n = 0
+    for i = 1, #list do
+        local inst = list[i]
+        local name = inst and (inst.Name or inst.name)
+        if name and PLAYER_CHAM_NAMES[name] and not PLAYER_CHAM_SKIP[name] then
+            if apply_one(inst, applied) then
+                n = n + 1
+            end
+        end
+    end
+
+    -- Fallback: direct children only (some builds omit nested descendants).
+    if n == 0 then
+        local kids = env.safe_call(function()
+            if char.get_children then return char:get_children() end
+            return char:GetChildren()
+        end) or {}
+        for i = 1, #kids do
+            local inst = kids[i]
+            local name = inst and (inst.Name or inst.name)
+            if name and PLAYER_CHAM_NAMES[name] and not PLAYER_CHAM_SKIP[name] then
+                if apply_one(inst, applied) then
+                    n = n + 1
+                end
+            end
+        end
+    end
+
+    return n
+end
+
+-- Prefer a single visual part per ESP entry (Main / HRP / first MeshPart).
+-- Cham'ing every descendant was heavy and made shared-mesh bleed worse.
+function M.cham_entry_part(entry, applied)
+    if not entry then return false end
+    local part = entry.main_part
+    if part and env.is_valid(part) and M.is_part(part) then
+        return apply_one(part, applied)
+    end
+    if entry.inst and env.is_valid(entry.inst) then
+        local esp_scan = July.require("game.esp_scan")
+        local main = esp_scan.find_main_part(entry.inst)
+        if main then
+            entry.main_part = main
+            return apply_one(main, applied)
+        end
+        -- Animals / odd models: first MeshPart descendant
+        local desc = env.safe_call(function()
+            if entry.inst.get_descendants then return entry.inst:get_descendants() end
+            return entry.inst:GetDescendants()
+        end) or {}
+        for _, d in ipairs(desc) do
+            if M.is_part(d) then
+                entry.main_part = d
+                return apply_one(d, applied)
+            end
+        end
+    end
+    return false
+end
+
+function M.cham_model_main(model, applied)
+    if not model then return false end
+    local esp_scan = July.require("game.esp_scan")
+    local main = esp_scan.find_main_part(model)
+    if main then return apply_one(main, applied) end
+    return apply_one(model, applied)
+end
+
+function M.cham_container_parts(container, applied, max_parts)
+    -- Kept for compatibility; prefer cham_entry_part for ESP.
+    max_parts = max_parts or 8
+    if not container then return 0 end
+    local n = 0
+    local main = July.require("game.esp_scan").find_main_part(container)
+    if main and apply_one(main, applied) then
+        n = n + 1
+    end
+    if n > 0 then return n end
+
+    local list = env.safe_call(function()
+        if container.get_descendants then return container:get_descendants() end
+        return container:GetDescendants()
+    end) or {}
+    for _, d in ipairs(list) do
+        if n >= max_parts then break end
+        if apply_one(d, applied) then n = n + 1 end
+    end
+    return n
+end
+
+function M.register_owner(id, opts)
+    opts = opts or {}
+    if not owners[id] then
+        owner_order[#owner_order + 1] = id
+    end
+    owners[id] = {
+        id = id,
+        applied = {}, -- front buffer
+        was_active = false,
+        is_active = opts.is_active or function() return false end,
+        style = opts.style or function() return 0, 0 end,
+        collect = opts.collect or function(_back) end,
+        last_rescan = 0,
+        rescan_ms = opts.rescan_ms or 500,
+    }
+    return owners[id]
+end
+
+function M.get_owner(id)
+    return owners[id]
+end
+
+local function apply_owner_into(owner, into)
+    if not owner or not owner.is_active() then return end
+    local mode, color = owner.style()
+    push_style(mode, color)
+    pcall(owner.collect, into)
+end
+
+function M.rebuild_all()
+    if not M.available() or rebuild_busy then return false end
+    local now = now_ms()
+    if last_global_rebuild ~= 0 and (now - last_global_rebuild) < MIN_REBUILD_GAP_MS then
+        return false
+    end
+    last_global_rebuild = now
+    rebuild_busy = true
+
+    pcall(function() exploits.RevertChams() end)
+
+    for _, id in ipairs(owner_order) do
+        local owner = owners[id]
+        if owner then
+            owner.applied = {}
+            owner.last_rescan = 0
+        end
+    end
+
+    for _, id in ipairs(owner_order) do
+        local owner = owners[id]
+        if owner and owner.is_active() then
+            local back = {}
+            apply_owner_into(owner, back)
+            owner.applied = back
+            owner.was_active = true
+        elseif owner then
+            owner.was_active = false
+        end
+    end
+
+    rebuild_busy = false
+    return true
+end
+
+function M.revert_all()
+    if not M.available() then return end
+    pcall(function() exploits.RevertChams() end)
+    last_global_rebuild = now_ms()
+    for _, id in ipairs(owner_order) do
+        local owner = owners[id]
+        if owner then
+            owner.applied = {}
+            owner.was_active = false
+            owner.last_rescan = 0
+        end
+    end
+end
+
+function M.clear_owner(id, rebuild_others)
+    local owner = owners[id]
+    if not owner then return end
+    local had = owner.was_active or next(owner.applied) ~= nil
+    owner.applied = {}
+    owner.was_active = false
+    owner.last_rescan = 0
+    if not had or rebuild_others == false then return end
+    if any_other_active(id) then
+        M.rebuild_all()
+    else
+        M.revert_all()
+    end
+end
+
+function M.refresh_owner_style(id)
+    local owner = owners[id]
+    if not owner then return end
+    if not owner.is_active() then
+        M.clear_owner(id)
+        return
+    end
+    -- Style change: must re-stamp; safest is full rebuild of active set.
+    M.rebuild_all()
+end
+
+function M.sync_owner(id, force)
+    if not M.available() or rebuild_busy then return end
+    local owner = owners[id]
+    if not owner then return end
+
+    if not owner.is_active() then
+        if owner.was_active or next(owner.applied) ~= nil then
+            M.clear_owner(id)
+        end
+        return
+    end
+
+    local now = now_ms()
+    if not force and owner.last_rescan ~= 0 and (now - owner.last_rescan) < owner.rescan_ms then
+        owner.was_active = true
+        return
+    end
+    owner.last_rescan = now
+    owner.was_active = true
+
+    -- Back buffer: what should be chammed right now (collectors must range-filter).
+    local back = {}
+    local mode, color = owner.style()
+    push_style(mode, color)
+    local ok = pcall(owner.collect, back)
+    if not ok then return end
+
+    local front = owner.applied
+
+    if sets_equal(front, back) then
+        return
+    end
+
+    if has_removed(front, back) or next(front) == nil then
+        -- Something left range / first populate after clear → swap buffers via rebuild.
+        -- Rebuild reapplies ALL active owners from scratch (correct multi-owner state).
+        owner.applied = {}
+        if not M.rebuild_all() then
+            -- Rate-limited: still track desired set; next tick will rebuild.
+            owner.applied = back
+        end
+        return
+    end
+
+    -- Only additions: stamp new addresses, no Revert needed.
+    for addr, _ in pairs(back) do
+        if not front[addr] then
+            pcall(exploits.ApplyChamsToInstance, addr)
+            front[addr] = true
+        end
+    end
+    owner.applied = front
+end
+
+function M.wire_style_controls(owner_id, mode_id, color_id)
+    if not menu or not menu.set_visible then return end
+
+    local function sync_color_vis()
+        local mode = M.mode_index(mode_id, 0)
+        pcall(menu.set_visible, color_id, M.color_visible_for_mode(mode))
+    end
+
+    settings.on_change(mode_id, function()
+        sync_color_vis()
+        M.refresh_owner_style(owner_id)
+    end)
+    settings.on_change(color_id, function()
+        M.refresh_owner_style(owner_id)
+    end)
+    sync_color_vis()
+end
+
+function M.add_mode_color_menu(T, G, parent_id, mode_id, color_id, mode_label, color_label)
+    local root = { parent = parent_id }
+    menu.add_combo(T, G, mode_id, mode_label or "Chams Mode", M.MODE_LABELS, 0, root)
+    menu.add_combo(T, G, color_id, color_label or "Chams Color", M.COLOR_LABELS, 0, root)
+    return mode_id, color_id
+end
+
+return M
+
+end)()
+
+-- ── game/item_categories.lua ──
+July._mods["game.item_categories"] = (function()
+local M = {}
+
+M.SECTIONS = {
+    {
+        ["id"] = "ammo",
+        ["label"] = "Ammo",
+        ["items"] = {
+            ".338 Lapua Magnum",
+            ".408 Cheyenne Tactical",
+            ".45 ACP",
+            ".50 Action Express",
+            "12 Gauge Buckshot",
+            "23x75mm Shrapnel-10",
+            "23x75mm Zvezda flashbang round",
+            "4.6x30mm",
+            "40x46mm M406 grenade",
+            "5.45x39mm",
+            "5.56x45mm NATO",
+            "5.7x28mm",
+            "5.8x42mm",
+            "7.62x39mm",
+            "7.62x51mm NATO",
+            "7.62x54mmR",
+            "9x18mm",
+            "9x19mm",
+            "9x39mm",
+            "PG-7V HEAT grenade",
+        },
+    },
+    {
+        ["id"] = "attachments",
+        ["label"] = "Attachments",
+        ["items"] = {
+            "ACOG TA11D 3.5x35 riflescope",
+            "AN PEQ-15 tactical device",
+            "Angled foregrip",
+            "Bramit 7.62x54R sound suppressor",
+            "CMT ZCOMP linear compensator",
+            "Colt 4x20 riflescope",
+            "EOTech 553 holographic sight",
+            "Gemtech SFN-57 5.7x28 sound suppressor",
+            "HK MP7 SD 2 4.6x30 sound suppressor",
+            "HVC-10T Night Vision Goggles",
+            "Improvised plastic sound suppressor",
+            "Kahles K624i 6-24x riflescope",
+            "LVPO 10x28 riflescope",
+            "Leupold Mark 8 8x24 riflescope",
+            "MAC-10 sound suppressor",
+            "MP9 9x19 sound suppressor",
+            "NCStar AQPTLMG Compact Green Laser",
+            "Nightforce ATACR 7-35x56",
+            "NovaTec RMR reflex sight",
+            "NovaTec reflex sight",
+            "ODWave 556 5.56x45 sound suppressor",
+            "OKP-7 reflex sight",
+            "Oil Filter sound suppressor",
+            "PBS-1 sound suppressor",
+            "PSO-1 4x24 scope",
+            "PU-1 3.5x riflescope",
+            "PureFire X300 Ultra",
+            "QDSS-NT4 5.56x45 sound suppressor",
+            "RK-1 tactical foregrip",
+            "SHARK muzzle brake",
+            "SV-98 7.62x54R sound suppressor",
+            "SilKo Osprey 9 9x19 sound suppressor",
+            "SilKo Salvo 12 12ga sound suppressor",
+            "SureFire 3-prong flash hider",
+            "SureFire 4-prong flash hider",
+            "T-7 Thermal Goggles",
+            "Type 04-1 holographic sight",
+            "UH-1 holographic sight",
+            "VSS modern stock",
+            "Vanish 30 5.56x45 sound suppressor",
+            "Vertical foregrip",
+            "YMA95-1 3.5x riflescope",
+        },
+    },
+    {
+        ["id"] = "buildings",
+        ["label"] = "Buildings",
+        ["items"] = {
+            "Aluminium Nails",
+            "Capacitors",
+            "Chemical Solution",
+            "Compact antenna",
+            "Corrugated Tube",
+            "Duct tape",
+            "Gears",
+            "Glue",
+            "Magnet",
+            "Metal fuel tank",
+            "Mounting Foam",
+            "Nails",
+            "Pipecleaner",
+            "Scrap Metal",
+            "Sealing Foam",
+            "Sodium Bicarbonate",
+            "Titanium Alloy Plate",
+            "Tube of cold welding",
+        },
+    },
+    {
+        ["id"] = "containers",
+        ["label"] = "Containers",
+        ["items"] = {
+            "Ammunition case",
+            "Blackberryz Wallet",
+            "Keycard holder case",
+            "Weapon case",
+        },
+    },
+    {
+        ["id"] = "documents",
+        ["label"] = "Documents",
+        ["items"] = {
+            "Alien on a Rampage Book",
+            "Bad Guys",
+            "CJJ’s Guide to Making Money",
+            "Dawnscript Fragment",
+            "Diary",
+            "Intelligence folder",
+            "Nomad Route Notes",
+            "Printer Paper",
+            "Sealed black file",
+            "Shards in the Code  Season One",
+        },
+    },
+    {
+        ["id"] = "electronics",
+        ["label"] = "Electronics",
+        ["items"] = {
+            "AA Battery",
+            "Cables",
+            "Car Battery",
+            "Geolocator",
+            "Golden Smartphone",
+            "Graphics card",
+            "Microcircuits",
+            "Power unit",
+            "Powerbank",
+            "RAM",
+            "SAS drive",
+            "SSD",
+            "Smartphone",
+            "Tank Battery",
+            "USB extension cable",
+        },
+    },
+    {
+        ["id"] = "gears",
+        ["label"] = "Gears",
+        ["items"] = {
+            "5.11 Hexgrid Plate Carrier",
+            "A7 Delta Riot Helmet",
+            "Altyn bulletproof Helmet",
+            "DC 800 High Cut Combat Helmet",
+            "FAST MT Helmet",
+            "FORT-9 Heavy Assault Rig",
+            "FORTIS MK.II Gloves",
+            "Forest Green Ghillie Suit",
+            "Gorynych-S  Sten  Assault Rig",
+            "Gzhel-K Body Armor",
+            "HVC Gen4 Body Armor",
+            "HVC Gen4 Body Armor (HMK)",
+            "HVC Plate Carrier",
+            "Hand Wraps",
+            "Integrated Tactical Plate Carrier",
+            "Korund-VM Body Armor",
+            "M40-1 Gas Mask",
+            "M40-2 Gas Mask",
+            "MBC Plate Carrier",
+            "MOTR Concealable Reinforced Vest",
+            "MSA Paraclete Plate Carrier",
+            "Mask",
+            "Maska-1SCh  Voin  Helmet",
+            "Maska-1SCh Helmet",
+            "Military Backpack",
+            "Military Helmet",
+            "PICO-A1 Light Lower Body Armor",
+            "PICO-A2 Heavy Lower Body Armor",
+            "PX27 Headlamp",
+            "Precisive Grips",
+            "ROVER Motorcycle Helmet",
+            "S&M Backpack",
+            "Scuba Gear",
+            "Slick Plate Carrier",
+            "Sling Bag",
+            "T178 Raid Backpack",
+            "Tagilla's welding mask  Gorilla ",
+            "Tagilla's welding mask  UBEY ",
+            "ULACH IIIA Helmet",
+            "Xtreme Motorcycle Helmet",
+        },
+    },
+    {
+        ["id"] = "households",
+        ["label"] = "Households",
+        ["items"] = {
+            "Antique teapot",
+            "Box of Sugar",
+            "Can of Beef",
+            "Can of Mackerel",
+            "Can of Salt",
+            "Can of Tuna",
+            "Construction Measuring Tape",
+            "Deodorant",
+            "Empty dish",
+            "Flash Drive",
+            "Flour",
+            "Havocola Cherry Burn",
+            "Havocola Classic",
+            "Homemade Soap",
+            "Insecticide spray",
+            "Insects Spray",
+            "Ketchup",
+            "Mayonnaise",
+            "Meat grinder",
+            "Mug",
+            "Northmont Sparkling Cider",
+            "Orange juice carton",
+            "Pack of matches",
+            "Palmolive handwash",
+            "Perfume",
+            "Porcelain",
+            "Rat Poison",
+            "Scissors",
+            "Sewing Kit",
+            "Shampoo",
+            "Spoon",
+            "Sticky Tape",
+            "String",
+            "Toilet paper",
+            "Toothpaste",
+            "Vegetable oil",
+            "Watch",
+        },
+    },
+    {
+        ["id"] = "mags",
+        ["label"] = "Mags",
+        ["items"] = {
+            "5.56x45 Beta C-Mag 100-round drum magazine",
+            "5.56x45 Colt AR-15 STANAG 20-round magazine",
+            "5.56x45 Colt AR-15 STANAG 30-round magazine",
+            "5.56x45 Colt AR-15 STANAG 60-round magazine",
+            "5.56x45 PMAG 60-round magazine",
+            "5.56x45 TV 100-round magazine",
+            "9x39 20-round magazine",
+            "9x39 30-round magazine",
+            "AK 7.62x39 40-round magazine",
+            "AK 7.62x39 Magpul PMAG 30 GEN M3 30-round magazine",
+            "AK-74 5.45x39 6L20 30-round magazine",
+            "AK-74 5.45x39 Magpul PMAG 30 GEN M3 30-round magazine",
+            "AWP .338 Lapua Magnum 5-round magazine",
+            "Beretta 92X 9x19 17-round magazine",
+            "DP-27 7.62x54mmR 47-round pan magazine",
+            "Deagle .50 AE 7-round magazine",
+            "FN P90 5.7x28 50-round magazine",
+            "FN SCAR-H 7.62x51 20-round magazine",
+            "FN SCAR-H 7.62x51 50-round drum magazine",
+            "GL 9x19 17-round magazine",
+            "GL 9x19 33-round magazine",
+            "GL 9x19 50-round drum magazine",
+            "HK MP5 9x19 30-round magazine",
+            "HK MP5 9x19 50-round drum magazine",
+            "HK MP7 4.6x30 40-round magazine",
+            "HK UMP .45 ACP 25-round magazine",
+            "M1911A1 .45 ACP 7-round magazine",
+            "M200 .408 Cheyenne Tactical 5-round magazine",
+            "MAC-10 9x19 30-round magazine",
+            "MP34 9x19 32-round magazine",
+            "MP9 9x19 30-round magazine",
+            "Makarov 9x18 8-round magazine",
+            "Mk14 7.62x51 10-round magazine",
+            "RPK-16 5.45x39 95-round drum magazine",
+            "SA58 FAL 7.62x51 20-round magazine",
+            "SA58 FAL 7.62x51 50-round drum magazine",
+            "SV-98 7.62x51 10-round magazine",
+            "SVD 7.62x54mmR 10-round magazine",
+            "Type 95 5.8x42mm 30-round magazine",
+        },
+    },
+    {
+        ["id"] = "medical",
+        ["label"] = "Medical",
+        ["items"] = {
+            "Defibrillator monitor",
+            "Insulin pump",
+            "Medical bloodset",
+            "Medical set",
+            "Pile of meds",
+            "Rapid Emergency AED Compact Tool",
+            "Sodium Chloride",
+            "Surgical kit",
+            "Vitamins",
+            "White tube",
+        },
+    },
+    {
+        ["id"] = "tools",
+        ["label"] = "Tools",
+        ["items"] = {
+            "Awl",
+            "Bimetallic Thermometer",
+            "Electric Drill",
+            "Field repair kit",
+            "Gunpowder",
+            "Long Screwdriver",
+            "Measuring tape",
+            "Metal Awl",
+            "Metal Cutting Scissors",
+            "Pipe wrench",
+            "Screwdriver",
+            "Weapon parts",
+            "Wrench",
+            "XLaser pointer module",
+        },
+    },
+    {
+        ["id"] = "valuables",
+        ["label"] = "Valuables",
+        ["items"] = {
+            "0.2 BTC",
+            "AK-1 Helm",
+            "Blahaj Baja Blast Pen",
+            "Conductor's Gold Pocket Watch",
+            "Cottage Cache Key",
+            "Deluxe Pirate Hook",
+            "Diamond ring",
+            "Domino Crown",
+            "FORTIS Coastal Outpost Cache Key",
+            "FORTIS Level-0 keycard",
+            "FORTIS Level-1 keycard",
+            "FORTIS Level-2 keycard",
+            "FORTIS Level-3 keycard",
+            "FORTIS Level-4 keycard",
+            "FORTIS Level-5 keycard",
+            "FORTIS Level-6 keycard",
+            "Glim Charm",
+            "Gold Trophy",
+            "Gold bar",
+            "Golden Cube",
+            "Golden Skull",
+            "Golden Watch",
+            "Jiffy Domino Top Hat",
+            "Magic Lamp",
+            "North Dolphin Hospital Safe Key",
+            "Spork 777",
+            "Sport Complex “Lych Zdorovya” Cache Key",
+            "The 5th Annual Bloxy Award",
+            "The Cap Of The Rebelled",
+            "The Greatest Admin plushie",
+            "Thraggorian Arms 3516",
+            "Vintage Gold Crown",
+            "XDM's Red Helm",
+            "iDog Bot",
+        },
+    },
+}
+
+M.NAME_TO_CATEGORY = {
+    [".338 Lapua Magnum"] = "ammo",
+    [".408 Cheyenne Tactical"] = "ammo",
+    [".45 ACP"] = "ammo",
+    [".50 Action Express"] = "ammo",
+    ["12 Gauge Buckshot"] = "ammo",
+    ["23x75mm Shrapnel-10"] = "ammo",
+    ["23x75mm Zvezda flashbang round"] = "ammo",
+    ["4.6x30mm"] = "ammo",
+    ["40x46mm M406 grenade"] = "ammo",
+    ["5.45x39mm"] = "ammo",
+    ["5.56x45mm NATO"] = "ammo",
+    ["5.7x28mm"] = "ammo",
+    ["5.8x42mm"] = "ammo",
+    ["7.62x39mm"] = "ammo",
+    ["7.62x51mm NATO"] = "ammo",
+    ["7.62x54mmR"] = "ammo",
+    ["9x18mm"] = "ammo",
+    ["9x19mm"] = "ammo",
+    ["9x39mm"] = "ammo",
+    ["PG-7V HEAT grenade"] = "ammo",
+    ["ACOG TA11D 3.5x35 riflescope"] = "attachments",
+    ["AN PEQ-15 tactical device"] = "attachments",
+    ["Angled foregrip"] = "attachments",
+    ["Bramit 7.62x54R sound suppressor"] = "attachments",
+    ["CMT ZCOMP linear compensator"] = "attachments",
+    ["Colt 4x20 riflescope"] = "attachments",
+    ["EOTech 553 holographic sight"] = "attachments",
+    ["Gemtech SFN-57 5.7x28 sound suppressor"] = "attachments",
+    ["HK MP7 SD 2 4.6x30 sound suppressor"] = "attachments",
+    ["HVC-10T Night Vision Goggles"] = "attachments",
+    ["Improvised plastic sound suppressor"] = "attachments",
+    ["Kahles K624i 6-24x riflescope"] = "attachments",
+    ["LVPO 10x28 riflescope"] = "attachments",
+    ["Leupold Mark 8 8x24 riflescope"] = "attachments",
+    ["MAC-10 sound suppressor"] = "attachments",
+    ["MP9 9x19 sound suppressor"] = "attachments",
+    ["NCStar AQPTLMG Compact Green Laser"] = "attachments",
+    ["Nightforce ATACR 7-35x56"] = "attachments",
+    ["NovaTec RMR reflex sight"] = "attachments",
+    ["NovaTec reflex sight"] = "attachments",
+    ["ODWave 556 5.56x45 sound suppressor"] = "attachments",
+    ["OKP-7 reflex sight"] = "attachments",
+    ["Oil Filter sound suppressor"] = "attachments",
+    ["PBS-1 sound suppressor"] = "attachments",
+    ["PSO-1 4x24 scope"] = "attachments",
+    ["PU-1 3.5x riflescope"] = "attachments",
+    ["PureFire X300 Ultra"] = "attachments",
+    ["QDSS-NT4 5.56x45 sound suppressor"] = "attachments",
+    ["RK-1 tactical foregrip"] = "attachments",
+    ["SHARK muzzle brake"] = "attachments",
+    ["SV-98 7.62x54R sound suppressor"] = "attachments",
+    ["SilKo Osprey 9 9x19 sound suppressor"] = "attachments",
+    ["SilKo Salvo 12 12ga sound suppressor"] = "attachments",
+    ["SureFire 3-prong flash hider"] = "attachments",
+    ["SureFire 4-prong flash hider"] = "attachments",
+    ["T-7 Thermal Goggles"] = "attachments",
+    ["Type 04-1 holographic sight"] = "attachments",
+    ["UH-1 holographic sight"] = "attachments",
+    ["VSS modern stock"] = "attachments",
+    ["Vanish 30 5.56x45 sound suppressor"] = "attachments",
+    ["Vertical foregrip"] = "attachments",
+    ["YMA95-1 3.5x riflescope"] = "attachments",
+    ["Aluminium Nails"] = "buildings",
+    ["Capacitors"] = "buildings",
+    ["Chemical Solution"] = "buildings",
+    ["Compact antenna"] = "buildings",
+    ["Corrugated Tube"] = "buildings",
+    ["Duct tape"] = "buildings",
+    ["Gears"] = "buildings",
+    ["Glue"] = "buildings",
+    ["Magnet"] = "buildings",
+    ["Metal fuel tank"] = "buildings",
+    ["Mounting Foam"] = "buildings",
+    ["Nails"] = "buildings",
+    ["Pipecleaner"] = "buildings",
+    ["Scrap Metal"] = "buildings",
+    ["Sealing Foam"] = "buildings",
+    ["Sodium Bicarbonate"] = "buildings",
+    ["Titanium Alloy Plate"] = "buildings",
+    ["Tube of cold welding"] = "buildings",
+    ["Ammunition case"] = "containers",
+    ["Blackberryz Wallet"] = "containers",
+    ["Keycard holder case"] = "containers",
+    ["Weapon case"] = "containers",
+    ["Alien on a Rampage Book"] = "documents",
+    ["Bad Guys"] = "documents",
+    ["CJJ’s Guide to Making Money"] = "documents",
+    ["Dawnscript Fragment"] = "documents",
+    ["Diary"] = "documents",
+    ["Intelligence folder"] = "documents",
+    ["Nomad Route Notes"] = "documents",
+    ["Printer Paper"] = "documents",
+    ["Sealed black file"] = "documents",
+    ["Shards in the Code  Season One"] = "documents",
+    ["AA Battery"] = "electronics",
+    ["Cables"] = "electronics",
+    ["Car Battery"] = "electronics",
+    ["Geolocator"] = "electronics",
+    ["Golden Smartphone"] = "electronics",
+    ["Graphics card"] = "electronics",
+    ["Microcircuits"] = "electronics",
+    ["Power unit"] = "electronics",
+    ["Powerbank"] = "electronics",
+    ["RAM"] = "electronics",
+    ["SAS drive"] = "electronics",
+    ["SSD"] = "electronics",
+    ["Smartphone"] = "electronics",
+    ["Tank Battery"] = "electronics",
+    ["USB extension cable"] = "electronics",
+    ["5.11 Hexgrid Plate Carrier"] = "gears",
+    ["A7 Delta Riot Helmet"] = "gears",
+    ["Altyn bulletproof Helmet"] = "gears",
+    ["DC 800 High Cut Combat Helmet"] = "gears",
+    ["FAST MT Helmet"] = "gears",
+    ["FORT-9 Heavy Assault Rig"] = "gears",
+    ["FORTIS MK.II Gloves"] = "gears",
+    ["Forest Green Ghillie Suit"] = "gears",
+    ["Gorynych-S  Sten  Assault Rig"] = "gears",
+    ["Gzhel-K Body Armor"] = "gears",
+    ["HVC Gen4 Body Armor"] = "gears",
+    ["HVC Gen4 Body Armor (HMK)"] = "gears",
+    ["HVC Plate Carrier"] = "gears",
+    ["Hand Wraps"] = "gears",
+    ["Integrated Tactical Plate Carrier"] = "gears",
+    ["Korund-VM Body Armor"] = "gears",
+    ["M40-1 Gas Mask"] = "gears",
+    ["M40-2 Gas Mask"] = "gears",
+    ["MBC Plate Carrier"] = "gears",
+    ["MOTR Concealable Reinforced Vest"] = "gears",
+    ["MSA Paraclete Plate Carrier"] = "gears",
+    ["Mask"] = "gears",
+    ["Maska-1SCh  Voin  Helmet"] = "gears",
+    ["Maska-1SCh Helmet"] = "gears",
+    ["Military Backpack"] = "gears",
+    ["Military Helmet"] = "gears",
+    ["PICO-A1 Light Lower Body Armor"] = "gears",
+    ["PICO-A2 Heavy Lower Body Armor"] = "gears",
+    ["PX27 Headlamp"] = "gears",
+    ["Precisive Grips"] = "gears",
+    ["ROVER Motorcycle Helmet"] = "gears",
+    ["S&M Backpack"] = "gears",
+    ["Scuba Gear"] = "gears",
+    ["Slick Plate Carrier"] = "gears",
+    ["Sling Bag"] = "gears",
+    ["T178 Raid Backpack"] = "gears",
+    ["Tagilla's welding mask  Gorilla "] = "gears",
+    ["Tagilla's welding mask  UBEY "] = "gears",
+    ["ULACH IIIA Helmet"] = "gears",
+    ["Xtreme Motorcycle Helmet"] = "gears",
+    ["Antique teapot"] = "households",
+    ["Box of Sugar"] = "households",
+    ["Can of Beef"] = "households",
+    ["Can of Mackerel"] = "households",
+    ["Can of Salt"] = "households",
+    ["Can of Tuna"] = "households",
+    ["Construction Measuring Tape"] = "households",
+    ["Deodorant"] = "households",
+    ["Empty dish"] = "households",
+    ["Flash Drive"] = "households",
+    ["Flour"] = "households",
+    ["Havocola Cherry Burn"] = "households",
+    ["Havocola Classic"] = "households",
+    ["Homemade Soap"] = "households",
+    ["Insecticide spray"] = "households",
+    ["Insects Spray"] = "households",
+    ["Ketchup"] = "households",
+    ["Mayonnaise"] = "households",
+    ["Meat grinder"] = "households",
+    ["Mug"] = "households",
+    ["Northmont Sparkling Cider"] = "households",
+    ["Orange juice carton"] = "households",
+    ["Pack of matches"] = "households",
+    ["Palmolive handwash"] = "households",
+    ["Perfume"] = "households",
+    ["Porcelain"] = "households",
+    ["Rat Poison"] = "households",
+    ["Scissors"] = "households",
+    ["Sewing Kit"] = "households",
+    ["Shampoo"] = "households",
+    ["Spoon"] = "households",
+    ["Sticky Tape"] = "households",
+    ["String"] = "households",
+    ["Toilet paper"] = "households",
+    ["Toothpaste"] = "households",
+    ["Vegetable oil"] = "households",
+    ["Watch"] = "households",
+    ["5.56x45 Beta C-Mag 100-round drum magazine"] = "mags",
+    ["5.56x45 Colt AR-15 STANAG 20-round magazine"] = "mags",
+    ["5.56x45 Colt AR-15 STANAG 30-round magazine"] = "mags",
+    ["5.56x45 Colt AR-15 STANAG 60-round magazine"] = "mags",
+    ["5.56x45 PMAG 60-round magazine"] = "mags",
+    ["5.56x45 TV 100-round magazine"] = "mags",
+    ["9x39 20-round magazine"] = "mags",
+    ["9x39 30-round magazine"] = "mags",
+    ["AK 7.62x39 40-round magazine"] = "mags",
+    ["AK 7.62x39 Magpul PMAG 30 GEN M3 30-round magazine"] = "mags",
+    ["AK-74 5.45x39 6L20 30-round magazine"] = "mags",
+    ["AK-74 5.45x39 Magpul PMAG 30 GEN M3 30-round magazine"] = "mags",
+    ["AWP .338 Lapua Magnum 5-round magazine"] = "mags",
+    ["Beretta 92X 9x19 17-round magazine"] = "mags",
+    ["DP-27 7.62x54mmR 47-round pan magazine"] = "mags",
+    ["Deagle .50 AE 7-round magazine"] = "mags",
+    ["FN P90 5.7x28 50-round magazine"] = "mags",
+    ["FN SCAR-H 7.62x51 20-round magazine"] = "mags",
+    ["FN SCAR-H 7.62x51 50-round drum magazine"] = "mags",
+    ["GL 9x19 17-round magazine"] = "mags",
+    ["GL 9x19 33-round magazine"] = "mags",
+    ["GL 9x19 50-round drum magazine"] = "mags",
+    ["HK MP5 9x19 30-round magazine"] = "mags",
+    ["HK MP5 9x19 50-round drum magazine"] = "mags",
+    ["HK MP7 4.6x30 40-round magazine"] = "mags",
+    ["HK UMP .45 ACP 25-round magazine"] = "mags",
+    ["M1911A1 .45 ACP 7-round magazine"] = "mags",
+    ["M200 .408 Cheyenne Tactical 5-round magazine"] = "mags",
+    ["MAC-10 9x19 30-round magazine"] = "mags",
+    ["MP34 9x19 32-round magazine"] = "mags",
+    ["MP9 9x19 30-round magazine"] = "mags",
+    ["Makarov 9x18 8-round magazine"] = "mags",
+    ["Mk14 7.62x51 10-round magazine"] = "mags",
+    ["RPK-16 5.45x39 95-round drum magazine"] = "mags",
+    ["SA58 FAL 7.62x51 20-round magazine"] = "mags",
+    ["SA58 FAL 7.62x51 50-round drum magazine"] = "mags",
+    ["SV-98 7.62x51 10-round magazine"] = "mags",
+    ["SVD 7.62x54mmR 10-round magazine"] = "mags",
+    ["Type 95 5.8x42mm 30-round magazine"] = "mags",
+    ["Defibrillator monitor"] = "medical",
+    ["Insulin pump"] = "medical",
+    ["Medical bloodset"] = "medical",
+    ["Medical set"] = "medical",
+    ["Pile of meds"] = "medical",
+    ["Rapid Emergency AED Compact Tool"] = "medical",
+    ["Sodium Chloride"] = "medical",
+    ["Surgical kit"] = "medical",
+    ["Vitamins"] = "medical",
+    ["White tube"] = "medical",
+    ["Awl"] = "tools",
+    ["Bimetallic Thermometer"] = "tools",
+    ["Electric Drill"] = "tools",
+    ["Field repair kit"] = "tools",
+    ["Gunpowder"] = "tools",
+    ["Long Screwdriver"] = "tools",
+    ["Measuring tape"] = "tools",
+    ["Metal Awl"] = "tools",
+    ["Metal Cutting Scissors"] = "tools",
+    ["Pipe wrench"] = "tools",
+    ["Screwdriver"] = "tools",
+    ["Weapon parts"] = "tools",
+    ["Wrench"] = "tools",
+    ["XLaser pointer module"] = "tools",
+    ["0.2 BTC"] = "valuables",
+    ["AK-1 Helm"] = "valuables",
+    ["Blahaj Baja Blast Pen"] = "valuables",
+    ["Conductor's Gold Pocket Watch"] = "valuables",
+    ["Cottage Cache Key"] = "valuables",
+    ["Deluxe Pirate Hook"] = "valuables",
+    ["Diamond ring"] = "valuables",
+    ["Domino Crown"] = "valuables",
+    ["FORTIS Coastal Outpost Cache Key"] = "valuables",
+    ["FORTIS Level-0 keycard"] = "valuables",
+    ["FORTIS Level-1 keycard"] = "valuables",
+    ["FORTIS Level-2 keycard"] = "valuables",
+    ["FORTIS Level-3 keycard"] = "valuables",
+    ["FORTIS Level-4 keycard"] = "valuables",
+    ["FORTIS Level-5 keycard"] = "valuables",
+    ["FORTIS Level-6 keycard"] = "valuables",
+    ["Glim Charm"] = "valuables",
+    ["Gold Trophy"] = "valuables",
+    ["Gold bar"] = "valuables",
+    ["Golden Cube"] = "valuables",
+    ["Golden Skull"] = "valuables",
+    ["Golden Watch"] = "valuables",
+    ["Jiffy Domino Top Hat"] = "valuables",
+    ["Magic Lamp"] = "valuables",
+    ["North Dolphin Hospital Safe Key"] = "valuables",
+    ["Spork 777"] = "valuables",
+    ["Sport Complex “Lych Zdorovya” Cache Key"] = "valuables",
+    ["The 5th Annual Bloxy Award"] = "valuables",
+    ["The Cap Of The Rebelled"] = "valuables",
+    ["The Greatest Admin plushie"] = "valuables",
+    ["Thraggorian Arms 3516"] = "valuables",
+    ["Vintage Gold Crown"] = "valuables",
+    ["XDM's Red Helm"] = "valuables",
+    ["iDog Bot"] = "valuables",
+}
+
+function M.resolve(name)
+    if not name or name == "" then return nil end
+    return M.NAME_TO_CATEGORY[name]
+end
+
+function M.section(id)
+    for i = 1, #M.SECTIONS do
+        local s = M.SECTIONS[i]
+        if s.id == id then
+            return s, i
+        end
+    end
+    return nil
+end
+
+function M.section_index(id)
+    for i = 1, #M.SECTIONS do
+        if M.SECTIONS[i].id == id then
+            return i
+        end
+    end
+    return nil
+end
+
+return M
+
+end)()
+
+-- ── game/item_esp_catalog.lua ──
+July._mods["game.item_esp_catalog"] = (function()
+local item_categories = July.require("game.item_categories")
+local settings = July.require("core.settings")
+
+local M = {}
+
+M.SECTION_COLORS = {
+    ammo = { 0.85, 0.75, 0.35, 1.0 },
+    attachments = { 0.55, 0.65, 0.75, 1.0 },
+    buildings = { 0.45, 0.55, 0.45, 1.0 },
+    containers = { 0.7, 0.55, 0.35, 1.0 },
+    documents = { 0.9, 0.9, 0.7, 1.0 },
+    electronics = { 0.35, 0.85, 0.95, 1.0 },
+    gears = { 0.95, 0.45, 0.25, 1.0 },
+    households = { 0.75, 0.75, 0.8, 1.0 },
+    mags = { 0.6, 0.6, 0.65, 1.0 },
+    medical = { 0.9, 0.25, 0.25, 1.0 },
+    tools = { 0.4, 0.7, 0.9, 1.0 },
+    valuables = { 1.0, 0.85, 0.2, 1.0 },
+}
+
+M.ITEM_INDEX = {}
+M.NORM_INDEX = {}
+
+local function normalize_name(name)
+    if not name then return nil end
+    name = name:gsub("\194\226\128\153", "'"):gsub("\194\226\128\156", "\""):gsub("\194\226\128\157", "\"")
+    name = name:gsub("%s+", " ")
+    return name:match("^%s*(.-)%s*$")
+end
+
+local function rebuild_index()
+    M.ITEM_INDEX = {}
+    M.NORM_INDEX = {}
+    for si = 1, #item_categories.SECTIONS do
+        local sec = item_categories.SECTIONS[si]
+        for ii = 1, #(sec.items or {}) do
+            local name = sec.items[ii]
+            M.ITEM_INDEX[name] = { sec.id, ii, si }
+            local norm = normalize_name(name)
+            if norm then
+                M.NORM_INDEX[norm] = { sec.id, ii, si }
+            end
+        end
+    end
+end
+
+rebuild_index()
+
+function M.normalize_name(name)
+    return normalize_name(name)
+end
+
+function M.section_multicombo_id(cat_id)
+    return "item_sec_" .. cat_id
+end
+
+function M.item_color_id(cat_id, item_idx)
+    return "item_clr_" .. cat_id .. "_" .. tostring(item_idx)
+end
+
+function M.lookup_item(name)
+    if not name or name == "" then return nil end
+    local map = M.ITEM_INDEX[name] or M.NORM_INDEX[normalize_name(name)]
+    return map
+end
+
+function M.is_item_enabled(name, category)
+    if category and category.loot_type == "body.bag" then
+        return settings.bool("havoc_item_show_body_bags", true)
+    end
+    if category and category.loot_type == "drop.keycard" then
+        return settings.bool("havoc_item_show_keycards", true)
+    end
+    if category and category.loot_type == "drop.gun" then
+        return settings.bool("havoc_item_show_guns", true)
+    end
+
+    if not name or name == "" then return false end
+    local map = M.lookup_item(name)
+    if not map then return true end
+    local cat_id, item_idx = map[1], map[2]
+    return settings.multi(M.section_multicombo_id(cat_id), item_idx, true)
+end
+
+function M.get_item_color(name)
+    local tier_util = July.require("game.tier_util")
+    local map = M.lookup_item(name)
+    if not map then
+        return tier_util.get_esp_color(name)
+    end
+    local cat_id, item_idx = map[1], map[2]
+    local default = M.SECTION_COLORS[cat_id] or tier_util.get_esp_color(name)
+    return settings.color(M.item_color_id(cat_id, item_idx), default)
+end
+
+function M.is_drop_category(category)
+    if not category or not category.loot_type then return false end
+    local lt = category.loot_type
+    return lt == "drop.gun" or lt == "drop.item" or lt == "drop.keycard" or lt == "body.bag"
+end
+
+return M
+
+end)()
+
+-- ── game/asset_urls.lua ──
 July._mods["game.asset_urls"] = (function()
 local M = {}
 
@@ -1379,6 +2807,7 @@ return M
 
 end)()
 
+-- ── core/image_cache.lua ──
 July._mods["core.image_cache"] = (function()
 local asset_urls = July.require("game.asset_urls")
 
@@ -1566,6 +2995,7 @@ return M
 
 end)()
 
+-- ── core/world_vis.lua ──
 July._mods["core.world_vis"] = (function()
 local M = {}
 
@@ -1696,8 +3126,11 @@ return M
 
 end)()
 
+-- ── core/esp_util.lua ──
 July._mods["core.esp_util"] = (function()
 local M = {}
+
+local env = July.require("core.env")
 
 local BOX_EDGES = {
     { 1, 2 }, { 1, 3 }, { 2, 4 }, { 3, 4 },
@@ -1728,22 +3161,54 @@ local function draw_line(x1, y1, x2, y2, col, thick)
     end
 end
 
+local function corner_world(box, sx, sy, sz)
+    local lx, ly, lz = sx * box.hx, sy * box.hy, sz * box.hz
+    -- Roblox Size.Z is along -LookVector
+    return box.x + box.rx * lx + box.ux * ly - box.lx * lz,
+        box.y + box.ry * lx + box.uy * ly - box.ly * lz,
+        box.z + box.rz * lx + box.uz * ly - box.lz * lz
+end
+
+function M.project_oriented_box(box)
+    if not box then return nil end
+
+    local bmin_x, bmin_y = math.huge, math.huge
+    local bmax_x, bmax_y = -math.huge, -math.huge
+    local valid = false
+    local screen = {}
+
+    for i = 1, 8 do
+        local s = BOX_SIGNS[i]
+        local wx, wy, wz = corner_world(box, s[1], s[2], s[3])
+        local px, py, vis = M.w2s(wx, wy, wz)
+        if vis then
+            valid = true
+            screen[i] = { x = px, y = py }
+            if px < bmin_x then bmin_x = px end
+            if px > bmax_x then bmax_x = px end
+            if py < bmin_y then bmin_y = py end
+            if py > bmax_y then bmax_y = py end
+        end
+    end
+
+    if not valid then return nil end
+    return {
+        x = bmin_x,
+        y = bmin_y,
+        w = bmax_x - bmin_x,
+        h = bmax_y - bmin_y,
+        valid = true,
+        screen = screen,
+    }
+end
+
 function M.draw_oriented_box(box, col, thick)
     if not box then return end
     thick = thick or 1
 
-    local screen = {}
-    for i = 1, 8 do
-        local sx, sy, sz = BOX_SIGNS[i][1], BOX_SIGNS[i][2], BOX_SIGNS[i][3]
-        local lx, ly, lz = sx * box.hx, sy * box.hy, sz * box.hz
-        local wx = box.x + box.rx * lx + box.ux * ly - box.lx * lz
-        local wy = box.y + box.ry * lx + box.uy * ly - box.ly * lz
-        local wz = box.z + box.rz * lx + box.uz * ly - box.lz * lz
-        local px, py, vis = M.w2s(wx, wy, wz)
-        if vis then
-            screen[i] = { x = px, y = py }
-        end
-    end
+    local projected = M.project_oriented_box(box)
+    if not projected then return end
+    local screen = projected.screen
 
     for i = 1, #BOX_EDGES do
         local edge = BOX_EDGES[i]
@@ -1755,19 +3220,33 @@ function M.draw_oriented_box(box, col, thick)
     end
 end
 
-function M.draw_entry_boxes(entry, col, thick)
-    if not entry or not entry.inst then return end
-    if entry.box then
-        M.draw_oriented_box(entry.box, col, thick)
+function M.draw_entry_boxes(entry, col, thick, style)
+    if not entry then return end
+
+    local box = entry.box
+    if not box then
+        local esp_scan = July.require("game.esp_scan")
+        esp_scan.refresh_entry_bounds(entry)
+        box = entry.box
+    end
+    if not box then return end
+
+    style = style or 2
+    if style == 2 then
+        M.draw_oriented_box(box, col, thick)
         return
     end
 
-    local esp_scan = July.require("game.esp_scan")
-    local main = entry.main_part or esp_scan.find_main_part(entry.inst)
-    local box = esp_scan.read_part_box(main)
-    if box then
-        entry.box = box
-        M.draw_oriented_box(box, col, thick)
+    local bounds = M.project_oriented_box(box)
+    if not bounds or not bounds.valid then return end
+    if style == 0 then
+        if draw and draw.CornerBox then
+            draw.CornerBox(bounds.x, bounds.y, bounds.w, bounds.h, col)
+        end
+    else
+        if draw and draw.Rect then
+            draw.Rect(bounds.x, bounds.y, bounds.w, bounds.h, col)
+        end
     end
 end
 
@@ -1775,8 +3254,8 @@ return M
 
 end)()
 
+-- ── game/item_tiers.lua ──
 July._mods["game.item_tiers"] = (function()
-
 local M = {}
 
 M.TIER_GAME = {
@@ -2194,6 +3673,7 @@ return M
 
 end)()
 
+-- ── game/tier_util.lua ──
 July._mods["game.tier_util"] = (function()
 local item_tiers = July.require("game.item_tiers")
 
@@ -2307,6 +3787,7 @@ return M
 
 end)()
 
+-- ── game/hitparts.lua ──
 July._mods["game.hitparts"] = (function()
 local M = {}
 
@@ -2391,11 +3872,11 @@ return M
 
 end)()
 
+-- ── game/loot_catalog.lua ──
 July._mods["game.loot_catalog"] = (function()
-local env = July.require("core.env")
-
 local M = {}
 
+-- Synced to dump/game-data/loot_types.txt (+ doors / military aliases still used in maps).
 M.LOOT_TYPES = {
     { key = "loot_ammo_crate", loot_type = "ammo.crate", display = "Ammo Crate", color = { 0.3, 0.75, 1.0, 1.0 } },
     { key = "loot_big_safe", loot_type = "big.safe", display = "Safe", color = { 1.0, 0.85, 0.2, 1.0 } },
@@ -2405,11 +3886,14 @@ M.LOOT_TYPES = {
     { key = "loot_complex_crate", loot_type = "complex.crate", display = "Complex Crate", color = { 0.55, 0.55, 0.6, 1.0 } },
     { key = "loot_computer", loot_type = "computer", display = "Computer", color = { 0.3, 0.9, 0.9, 1.0 } },
     { key = "loot_dishwasher", loot_type = "dishwasher", display = "Dishwasher", color = { 0.6, 0.7, 0.8, 1.0 } },
+    { key = "loot_double_washing_machine", loot_type = "double.washing.machine", display = "Double Washing Machine", color = { 0.62, 0.72, 0.84, 1.0 } },
     { key = "loot_duffel_bag", loot_type = "duffel.bag", display = "Duffel Bag", color = { 0.85, 0.7, 0.35, 1.0 } },
     { key = "loot_envelope", loot_type = "envelope", display = "Envelope", color = { 0.9, 0.85, 0.7, 1.0 } },
     { key = "loot_file_cabinet", loot_type = "file.cabinet", display = "File Cabinet", color = { 0.55, 0.5, 0.45, 1.0 } },
     { key = "loot_fridge", loot_type = "fridge", display = "Fridge", color = { 0.75, 0.88, 0.92, 1.0 } },
     { key = "loot_hospital_cabinet", loot_type = "hospital.cabinet", display = "Hospital Cabinet", color = { 0.9, 0.9, 0.95, 1.0 } },
+    { key = "loot_hospital_closet", loot_type = "hospital.closet", display = "Hospital Closet", color = { 0.85, 0.88, 0.95, 1.0 } },
+    { key = "loot_hospital_table", loot_type = "hospital.table", display = "Hospital Table", color = { 0.8, 0.85, 0.9, 1.0 } },
     { key = "loot_locker", loot_type = "locker", display = "Locker", color = { 0.55, 0.55, 0.6, 1.0 } },
     { key = "loot_medical_box", loot_type = "medical.box", display = "Medical Box", color = { 0.9, 0.2, 0.2, 1.0 } },
     { key = "loot_medium_crate", loot_type = "medium.wooden.crate", display = "Medium Wooden Crate", color = { 0.62, 0.44, 0.24, 1.0 } },
@@ -2424,6 +3908,7 @@ M.LOOT_TYPES = {
     { key = "loot_tall_fridge", loot_type = "tall.fridge", display = "Tall Fridge", color = { 0.7, 0.85, 0.9, 1.0 } },
     { key = "loot_tool_shelf", loot_type = "tool.shelf", display = "Tool Shelf", color = { 0.4, 0.68, 0.88, 1.0 } },
     { key = "loot_toolbox", loot_type = "toolbox", display = "Toolbox", color = { 0.4, 0.65, 0.85, 1.0 } },
+    { key = "loot_wall_atm", loot_type = "wall.atm", display = "Wall ATM", color = { 0.15, 0.85, 0.45, 1.0 } },
     { key = "loot_washing_machine", loot_type = "washing.machine", display = "Washing Machine", color = { 0.65, 0.75, 0.85, 1.0 } },
     { key = "loot_weapon_box", loot_type = "weapon.box", display = "Weapon Box", color = { 1.0, 0.35, 0.25, 1.0 } },
     { key = "loot_weapon_locker", loot_type = "weapon.locker", display = "Weapon Locker", color = { 1.0, 0.4, 0.2, 1.0 } },
@@ -2439,6 +3924,57 @@ M.DROP_TYPES = {
     { key = "loot_keycards", loot_type = "drop.keycard", display = "Keycards", color = { 0.95, 0.82, 0.32, 1.0 } },
 }
 
+-- Container loot grouped for multicombo filters (drops use Item ESP tab).
+M.LOOT_SECTIONS = {
+    {
+        id = "storage",
+        label = "Storage",
+        multicombo = "loot_sec_storage",
+        keys = {
+            "loot_cabinet", "loot_closet", "loot_locker", "loot_fridge", "loot_tall_fridge",
+            "loot_file_cabinet", "loot_hospital_cabinet", "loot_hospital_closet",
+            "loot_weapon_locker", "loot_duffel_bag",
+        },
+    },
+    {
+        id = "crates",
+        label = "Crates & Cases",
+        multicombo = "loot_sec_crates",
+        keys = {
+            "loot_ammo_crate", "loot_wooden_crate", "loot_medium_crate", "loot_complex_crate",
+            "loot_military_supply", "loot_pistol_case", "loot_rifle_case", "loot_small_case",
+            "loot_weapon_box",
+        },
+    },
+    {
+        id = "security",
+        label = "Security & Cash",
+        multicombo = "loot_sec_security",
+        keys = {
+            "loot_big_safe", "loot_cash_register", "loot_envelope", "loot_standing_atm", "loot_wall_atm",
+        },
+    },
+    {
+        id = "utility",
+        label = "Utility & Medical",
+        multicombo = "loot_sec_utility",
+        keys = {
+            "loot_computer", "loot_dishwasher", "loot_double_washing_machine", "loot_hospital_table",
+            "loot_medical_box", "loot_military_radio", "loot_server_unit", "loot_stove",
+            "loot_tool_shelf", "loot_toolbox", "loot_washing_machine",
+        },
+    },
+    {
+        id = "doors",
+        label = "Doors",
+        multicombo = "loot_sec_doors",
+        keys = { "loot_door" },
+    },
+}
+
+M.SECTION_KEY_INDEX = {}
+M.KEY_TO_ENTRY = {}
+
 M.TYPE_MAP = {}
 M.NAME_MAP = {}
 M.MULTICOMBO_ENTRIES = {}
@@ -2451,11 +3987,15 @@ local MODEL_ALIASES = {
     ["Safe"] = "big.safe",
     ["Cash Register"] = "cash.register",
     ["HospitalCabinet"] = "hospital.cabinet",
+    ["HospitalCloset"] = "hospital.closet",
+    ["HospitalTable"] = "hospital.table",
     ["StandingATM"] = "standing.atm",
+    ["WallATM"] = "wall.atm",
     ["Military Crate"] = "military.supply",
     ["Raider Cache"] = "big.safe",
     ["Technical Shelf"] = "tool.shelf",
     ["Surgeon's Tool Shelf"] = "tool.shelf",
+    ["DoubleWashingMachine"] = "double.washing.machine",
     ["WoodenDoor"] = "door",
     ["DoubleGlassDoor"] = "door",
     ["DoubleMetalDoor"] = "door",
@@ -2470,11 +4010,14 @@ local function rebuild()
     M.MULTICOMBO_LABELS = {}
     M.MULTICOMBO_DEFAULTS = {}
     M.KEY_TO_INDEX = {}
+    M.SECTION_KEY_INDEX = {}
+    M.KEY_TO_ENTRY = {}
 
     for i = 1, #M.LOOT_TYPES do
         local entry = M.LOOT_TYPES[i]
         M.TYPE_MAP[entry.loot_type] = entry
         M.KEY_TO_INDEX[entry.key] = i
+        M.KEY_TO_ENTRY[entry.key] = entry
         M.MULTICOMBO_ENTRIES[i] = entry
         M.MULTICOMBO_LABELS[i] = entry.display
         M.MULTICOMBO_DEFAULTS[i] = true
@@ -2486,6 +4029,7 @@ local function rebuild()
         local idx = base + i
         M.TYPE_MAP[entry.loot_type] = entry
         M.KEY_TO_INDEX[entry.key] = idx
+        M.KEY_TO_ENTRY[entry.key] = entry
         M.MULTICOMBO_ENTRIES[idx] = entry
         M.MULTICOMBO_LABELS[idx] = entry.display
         M.MULTICOMBO_DEFAULTS[idx] = true
@@ -2494,9 +4038,17 @@ local function rebuild()
     local body_idx = base + #M.DROP_TYPES + 1
     M.TYPE_MAP[M.BODY_BAG_TYPE.loot_type] = M.BODY_BAG_TYPE
     M.KEY_TO_INDEX[M.BODY_BAG_TYPE.key] = body_idx
+    M.KEY_TO_ENTRY[M.BODY_BAG_TYPE.key] = M.BODY_BAG_TYPE
     M.MULTICOMBO_ENTRIES[body_idx] = M.BODY_BAG_TYPE
     M.MULTICOMBO_LABELS[body_idx] = M.BODY_BAG_TYPE.display
     M.MULTICOMBO_DEFAULTS[body_idx] = true
+
+    for si = 1, #M.LOOT_SECTIONS do
+        local sec = M.LOOT_SECTIONS[si]
+        for ii = 1, #(sec.keys or {}) do
+            M.SECTION_KEY_INDEX[sec.keys[ii]] = { si, ii }
+        end
+    end
 
     for model_name, loot_type in pairs(MODEL_ALIASES) do
         M.NAME_MAP[model_name] = loot_type
@@ -2530,6 +4082,19 @@ end
 function M.is_enabled(category)
     if not category or not category.key then return false end
     local settings = July.require("core.settings")
+    local map = M.SECTION_KEY_INDEX[category.key]
+    if map then
+        local sec = M.LOOT_SECTIONS[map[1]]
+        if sec and sec.multicombo then
+            return settings.multi(sec.multicombo, map[2], true)
+        end
+    end
+    if category.loot_type and string.sub(category.loot_type, 1, 5) == "drop." then
+        return false
+    end
+    if category.loot_type == "body.bag" then
+        return false
+    end
     return settings.bool(category.key, true)
 end
 
@@ -2563,6 +4128,7 @@ return M
 
 end)()
 
+-- ── game/trap_types.lua ──
 July._mods["game.trap_types"] = (function()
 local M = {}
 
@@ -2570,20 +4136,26 @@ M.TRAP_TYPES = {
     { key = "trap_tripmine", display = "Tripmine", color = { 1.0, 0.5, 0.0, 1.0 } },
     { key = "trap_mine", display = "Mine", color = { 1.0, 0.2, 0.0, 1.0 } },
     { key = "trap_alarm", display = "Alarm", color = { 1.0, 0.0, 0.0, 1.0 } },
-    { key = "trap_airstrike", display = "Airstrike Alarm", color = { 1.0, 0.1, 0.1, 1.0 } },
     { key = "trap_barrel", display = "Explosive Barrel", color = { 1.0, 0.3, 0.0, 1.0 } },
     { key = "trap_sentry", display = "Sentry", color = { 0.8, 0.0, 0.0, 1.0 } },
     { key = "trap_gas", display = "Toxic Gas", color = { 0.2, 0.8, 0.0, 1.0 } },
 }
 
+M.BY_KEY = {}
 M.MULTICOMBO_LABELS = {}
 M.MULTICOMBO_DEFAULTS = {}
 M.KEY_TO_INDEX = {}
 
 for i = 1, #M.TRAP_TYPES do
-    M.MULTICOMBO_LABELS[i] = M.TRAP_TYPES[i].display
+    local entry = M.TRAP_TYPES[i]
+    M.MULTICOMBO_LABELS[i] = entry.display
     M.MULTICOMBO_DEFAULTS[i] = true
-    M.KEY_TO_INDEX[M.TRAP_TYPES[i].key] = i
+    M.KEY_TO_INDEX[entry.key] = i
+    M.BY_KEY[entry.key] = entry
+end
+
+function M.get(key)
+    return M.BY_KEY[key]
 end
 
 function M.is_enabled(trap_type)
@@ -2602,6 +4174,7 @@ return M
 
 end)()
 
+-- ── game/havoc_sync.lua ──
 July._mods["game.havoc_sync"] = (function()
 local env = July.require("core.env")
 
@@ -2721,8 +4294,8 @@ return M
 
 end)()
 
+-- ── game/havoc_item_catalog.lua ──
 July._mods["game.havoc_item_catalog"] = (function()
-
 local M = {}
 
 M.by_name = {
@@ -2885,8 +4458,8 @@ return M
 
 end)()
 
+-- ── game/gear_types.lua ──
 July._mods["game.gear_types"] = (function()
-
 local M = {}
 
 M.SLOT_ORDER = { "helmet", "face_cover", "armor", "lower_armor", "gloves", "backpack" }
@@ -2949,6 +4522,7 @@ return M
 
 end)()
 
+-- ── game/havoc_icons.lua ──
 July._mods["game.havoc_icons"] = (function()
 local havoc_catalog = July.require("game.havoc_item_catalog")
 local env = July.require("core.env")
@@ -3111,8 +4685,8 @@ return M
 
 end)()
 
+-- ── game/item_images.lua ──
 July._mods["game.item_images"] = (function()
-
 local M = {}
 
 M.by_name = {
@@ -3471,6 +5045,7 @@ return M
 
 end)()
 
+-- ── game/items.lua ──
 July._mods["game.items"] = (function()
 local havoc_icons = July.require("game.havoc_icons")
 local havoc_catalog = July.require("game.havoc_item_catalog")
@@ -3642,6 +5217,7 @@ return M
 
 end)()
 
+-- ── game/weapons.lua ──
 July._mods["game.weapons"] = (function()
 local env = July.require("core.env")
 local tier_util = July.require("game.tier_util")
@@ -3727,6 +5303,7 @@ return M
 
 end)()
 
+-- ── game/target_gear.lua ──
 July._mods["game.target_gear"] = (function()
 local env = July.require("core.env")
 local items = July.require("game.items")
@@ -4027,6 +5604,7 @@ return M
 
 end)()
 
+-- ── game/combat_stats.lua ──
 July._mods["game.combat_stats"] = (function()
 local weapons = July.require("game.weapons")
 
@@ -4088,6 +5666,7 @@ return M
 
 end)()
 
+-- ── game/combat_origin.lua ──
 July._mods["game.combat_origin"] = (function()
 local env = July.require("core.env")
 local weapons = July.require("game.weapons")
@@ -4283,51 +5862,70 @@ return M
 
 end)()
 
+-- ── game/npc_types.lua ──
 July._mods["game.npc_types"] = (function()
+local env = July.require("core.env")
 
 local M = {}
 
+-- Dump-backed bosses (__tempSTORAGE.characters) + legacy Havoc boss names.
 M.BOSS_NAMES = {
+    Anvil = true,
     Boris = true,
+    Breaker = true,
     Bruno = true,
     Brutus = true,
-    Tagilla = true,
-    Ranger = true,
-    Clutch = true,
-    Kodiak = true,
-    Vandal = true,
-    Grizzly = true,
-    Crossfire = true,
-    Warlock = true,
-    Stalemate = true,
-    Lynx = true,
-    Hawk = true,
-    Talon = true,
-    Volt = true,
-    Dagger = true,
-    Spartan = true,
-    Cipher = true,
-    Maverick = true,
-    Falcon = true,
-    Checkmate = true,
-    Scorch = true,
-    Raptor = true,
-    Knox = true,
-    Fox = true,
     Bullet = true,
-    Zero = true,
+    Cervus = true,
+    Charger = true,
+    Checkmate = true,
+    Cipher = true,
+    Clutch = true,
     Cobra = true,
+    Crossfire = true,
+    Dagger = true,
+    Falcon = true,
+    Fox = true,
     Ghost = true,
-    Shade = true,
-    Mamba = true,
-    Phoenix = true,
-    Anvil = true,
+    Grizzly = true,
     Gunner = true,
+    Hawk = true,
+    Ironclad = true,
+    Kingslayer = true,
+    Knox = true,
+    Kodiak = true,
+    Lockstep = true,
+    Lynx = true,
+    Mamba = true,
+    Maverick = true,
+    Omen = true,
+    Phantom = true,
+    Phoenix = true,
+    Queensguard = true,
+    Ranger = true,
+    Raptor = true,
+    Scorch = true,
+    Shade = true,
+    Spartan = true,
+    Stalemate = true,
+    Tagilla = true,
+    Talon = true,
+    Vandal = true,
+    Volt = true,
+    Warlock = true,
+    Wolf = true,
+    Zero = true,
 }
 
 M.SNIPER_NAMES = {
     Sentry = true,
 }
+
+local function strip_sniper_prefix(name)
+    if not name then return "" end
+    local stripped = name:match("^%[Sniper%]%s*(.+)$")
+    return stripped or name
+end
 
 function M.has_boss_template(model)
     if not model then return false end
@@ -4345,7 +5943,9 @@ function M.read_attributes(model)
 
     pcall(function()
         if model.GetAttribute then
-            if model:GetAttribute("Boss") then is_boss = true end
+            if model:GetAttribute("Boss") or model:GetAttribute("IsBoss") then
+                is_boss = true
+            end
             if model:GetAttribute("Sniper") or model:GetAttribute("IsSniper") then
                 is_sniper = true
             end
@@ -4360,15 +5960,20 @@ function M.classify(model)
 
     local is_boss, is_sniper = M.read_attributes(model)
     local name = model.Name or ""
+    local base_name = strip_sniper_prefix(name)
 
     if not is_boss then
-        if M.BOSS_NAMES[name] or M.has_boss_template(model) then
+        if M.BOSS_NAMES[name] or M.BOSS_NAMES[base_name] or M.has_boss_template(model) then
             is_boss = true
         end
     end
 
     if not is_boss then
-        if M.SNIPER_NAMES[name] or name:find("Sniper", 1, true) then
+        if M.SNIPER_NAMES[name]
+            or M.SNIPER_NAMES[base_name]
+            or name:find("Sniper", 1, true)
+            or name:find("[Sniper]", 1, true)
+        then
             is_sniper = true
         end
     else
@@ -4382,7 +5987,12 @@ function M.display_type(ent)
     if not ent then return nil end
     if ent.is_boss then return "Boss" end
     if ent.is_sniper then return "Sniper" end
-    if ent.model and ent.model.Name == "Sentry" then return nil end
+    if ent.model then
+        local name = ent.model.Name or ""
+        if name == "Sentry" or name:find("Sentry", 1, true) then
+            return "Sentry"
+        end
+    end
     return "Scav"
 end
 
@@ -4397,6 +6007,7 @@ return M
 
 end)()
 
+-- ── game/entity_scan.lua ──
 July._mods["game.entity_scan"] = (function()
 local constants = July.require("core.constants")
 local scan_yield = July.require("core.scan_yield")
@@ -4652,60 +6263,75 @@ local function get_held_weapon_name(model)
     return name
 end
 
-local function refresh_weapon_state(ent)
-    local _, weapon = get_held_weapon_inst(ent.model)
-    if not weapon then
-        ent._ammo_current = nil
-        ent._reloading = nil
-        return
-    end
+local HELD_EMPTY_CLEAR_TICKS = 45
+local WEAPON_STATE_CLEAR_TICKS = 45
+
+local function read_weapon_values(weapon)
+    local ammo_current, reloading = nil, nil
 
     local data = env.find_child(weapon, "_data")
     if not data then
-        ent._ammo_current = nil
-        ent._reloading = nil
-        return
+        return ammo_current, reloading
     end
 
     local ammo = env.find_child(data, "ammoCurrent")
     if ammo then
         local ok, value = pcall(function() return ammo.Value end)
-        ent._ammo_current = ok and value or nil
-    else
-        ent._ammo_current = nil
+        ammo_current = ok and value or nil
     end
 
     local reload = env.find_child(data, "reload")
     if reload then
-        local reloading = env.find_child(reload, "reloading")
-        if reloading then
-            local ok, value = pcall(function() return reloading.Value end)
-            ent._reloading = ok and value == true or false
-        else
-            ent._reloading = nil
+        local reloading_inst = env.find_child(reload, "reloading")
+        if reloading_inst then
+            local ok, value = pcall(function() return reloading_inst.Value end)
+            reloading = ok and value == true or false
         end
-    else
-        ent._reloading = nil
     end
+
+    return ammo_current, reloading
 end
 
-local HELD_EMPTY_CLEAR_TICKS = 45
-
-local function refresh_held_name(ent)
-    local new_held = get_held_weapon_name(ent.model)
-    if new_held and new_held ~= "" then
-        ent._held_name = new_held
+local function refresh_weapon_state(ent)
+    local name, weapon = get_held_weapon_inst(ent.model)
+    if name and name ~= "" and weapon then
+        ent._held_name = name
         ent._held_empty_ticks = 0
+        ent._weapon_empty_ticks = 0
+        ent._ammo_current, ent._reloading = read_weapon_values(weapon)
         return
     end
 
-    if ent._held_name then
-        ent._held_empty_ticks = (ent._held_empty_ticks or 0) + 1
-        if ent._held_empty_ticks >= HELD_EMPTY_CLEAR_TICKS then
-            ent._held_name = nil
-            ent._held_empty_ticks = 0
-        end
+    ent._weapon_empty_ticks = (ent._weapon_empty_ticks or 0) + 1
+    if ent._weapon_empty_ticks >= WEAPON_STATE_CLEAR_TICKS then
+        ent._held_name = nil
+        ent._ammo_current = nil
+        ent._reloading = nil
+        ent._weapon_empty_ticks = 0
+        ent._held_empty_ticks = 0
     end
+end
+
+local function refresh_held_name(ent)
+    refresh_weapon_state(ent)
+end
+
+-- Live read for draw frame; keeps last good values on transient misses (no flicker).
+function M.read_weapon_display(ent)
+    if not ent or not ent.model then
+        return ent and ent._held_name, ent and ent._ammo_current, ent and ent._reloading
+    end
+
+    local name, weapon = get_held_weapon_inst(ent.model)
+    if name and name ~= "" and weapon then
+        ent._held_name = name
+        ent._held_empty_ticks = 0
+        ent._weapon_empty_ticks = 0
+        ent._ammo_current, ent._reloading = read_weapon_values(weapon)
+        return ent._held_name, ent._ammo_current, ent._reloading
+    end
+
+    return ent._held_name, ent._ammo_current, ent._reloading
 end
 
 function M.refresh_live()
@@ -4761,8 +6387,8 @@ return M
 
 end)()
 
+-- ── game/esp_scan.lua ──
 July._mods["game.esp_scan"] = (function()
-
 local env = July.require("core.env")
 
 local M = {}
@@ -4771,11 +6397,19 @@ local PART_CLASSES = {
     Part = true,
     MeshPart = true,
     UnionOperation = true,
+    WedgePart = true,
+    CornerWedgePart = true,
+    TrussPart = true,
 }
 
 function M.is_part(inst)
     if not inst then return false end
-    return PART_CLASSES[inst.ClassName] == true
+    if PART_CLASSES[inst.ClassName] then return true end
+    return env.safe_call(function()
+        if inst.IsA then return inst:IsA("BasePart") end
+        if inst.is_a then return inst:is_a("BasePart") end
+        return false
+    end) == true
 end
 
 function M.find_main_part(model)
@@ -4790,6 +6424,11 @@ function M.find_main_part(model)
         return model:FindFirstChild("HumanoidRootPart")
     end)
     if hrp and M.is_part(hrp) then return hrp end
+
+    local base = env.safe_call(function()
+        return model:FindFirstChild("Base")
+    end)
+    if base and M.is_part(base) then return base end
 
     local children = env.safe_call(function() return model:GetChildren() end) or {}
     for i = 1, #children do
@@ -4807,19 +6446,43 @@ local function vec3(v, axis)
     return v.z or v.Z or 0
 end
 
+local function read_axes(part)
+    local rv, uv, lv
+    pcall(function()
+        local cf = part.CFrame
+        if cf then
+            rv = cf.RightVector or cf.XVector
+            uv = cf.UpVector or cf.YVector
+            lv = cf.LookVector
+            if not lv and cf.ZVector then
+                local zx = cf.ZVector.X or cf.ZVector.x or 0
+                local zy = cf.ZVector.Y or cf.ZVector.y or 0
+                local zz = cf.ZVector.Z or cf.ZVector.z or 0
+                lv = { X = -zx, Y = -zy, Z = -zz }
+            end
+        end
+    end)
+    if not rv or not uv or not lv then
+        pcall(function()
+            rv = rv or part.RightVector
+            uv = uv or part.UpVector
+            lv = lv or part.LookVector
+        end)
+    end
+    return rv, uv, lv
+end
+
 function M.read_part_box(part)
     if not env.is_valid(part) or not M.is_part(part) then return nil end
 
-    local pos, size, rv, uv, lv
+    local pos, size
     pcall(function()
         pos = part.Position
         size = part.Size
-        rv = part.RightVector
-        uv = part.UpVector
-        lv = part.LookVector
     end)
-
     if not pos or not size then return nil end
+
+    local rv, uv, lv = read_axes(part)
 
     return {
         x = vec3(pos, "x"),
@@ -4840,9 +6503,93 @@ function M.read_part_box(part)
     }
 end
 
+-- ponytail: GetBoundingBox is accurate but too heavy for per-frame ESP; use on demand only.
+function M.read_model_box(model)
+    if not env.is_valid(model) then return nil end
+    local main = M.find_main_part(model)
+    return M.read_part_box(main)
+end
+
+local function expand_aabb(minx, miny, minz, maxx, maxy, maxz, box)
+    local corners = {
+        { -1, -1, -1 }, { 1, -1, -1 }, { -1, 1, -1 }, { 1, 1, -1 },
+        { -1, -1, 1 }, { 1, -1, 1 }, { -1, 1, 1 }, { 1, 1, 1 },
+    }
+    for i = 1, 8 do
+        local s = corners[i]
+        local wx = box.x + box.rx * box.hx * s[1] + box.ux * box.hy * s[2] - box.lx * box.hz * s[3]
+        local wy = box.y + box.ry * box.hx * s[1] + box.uy * box.hy * s[2] - box.ly * box.hz * s[3]
+        local wz = box.z + box.rz * box.hx * s[1] + box.uz * box.hy * s[2] - box.lz * box.hz * s[3]
+        if wx < minx then minx = wx end
+        if wy < miny then miny = wy end
+        if wz < minz then minz = wz end
+        if wx > maxx then maxx = wx end
+        if wy > maxy then maxy = wy end
+        if wz > maxz then maxz = wz end
+    end
+    return minx, miny, minz, maxx, maxy, maxz
+end
+
+-- Multi-part world AABB (cheap, no GetBoundingBox).
+function M.read_parts_aabb(model, max_parts)
+    if not env.is_valid(model) then return nil end
+    max_parts = max_parts or 6
+
+    local minx, miny, minz = math.huge, math.huge, math.huge
+    local maxx, maxy, maxz = -math.huge, -math.huge, -math.huge
+    local count = 0
+
+    local function visit(inst, depth)
+        if not inst or not env.is_valid(inst) or depth > 4 or count >= max_parts then return end
+        if M.is_part(inst) then
+            local box = M.read_part_box(inst)
+            if box then
+                minx, miny, minz, maxx, maxy, maxz = expand_aabb(minx, miny, minz, maxx, maxy, maxz, box)
+                count = count + 1
+            end
+            return
+        end
+        local children = env.safe_call(function() return inst:GetChildren() end)
+        if not children then return end
+        for i = 1, #children do
+            visit(children[i], depth + 1)
+        end
+    end
+
+    visit(model, 0)
+    if count == 0 or minx == math.huge then return nil end
+
+    local cx = (minx + maxx) * 0.5
+    local cy = (miny + maxy) * 0.5
+    local cz = (minz + maxz) * 0.5
+    return {
+        x = cx, y = cy, z = cz,
+        hx = (maxx - minx) * 0.5,
+        hy = (maxy - miny) * 0.5,
+        hz = (maxz - minz) * 0.5,
+        rx = 1, ry = 0, rz = 0,
+        ux = 0, uy = 1, uz = 0,
+        lx = 0, ly = 0, lz = 1,
+        aabb = true,
+    }
+end
+
+local function set_label_from_box(entry, box)
+    entry.box = box
+    entry.lx = box.x
+    entry.ly = box.y + box.hy + 0.25
+    entry.lz = box.z
+end
+
+local function set_label_from_pos(entry, pos)
+    entry.lx = vec3(pos, "x")
+    entry.ly = vec3(pos, "y") + 0.25
+    entry.lz = vec3(pos, "z")
+end
+
 function M.label_position(entry)
     if not entry or not env.is_valid(entry.inst) then return nil end
-    local main = M.find_main_part(entry.inst)
+    local main = entry.main_part or M.find_main_part(entry.inst)
     if main then
         local box = M.read_part_box(main)
         if box then
@@ -4856,68 +6603,113 @@ function M.label_position(entry)
     return nil
 end
 
-function M.hydrate_entry(entry)
-    if not entry or not env.is_valid(entry.inst) then return entry end
+function M.hydrate_entry(entry, opts)
+    if not entry then return entry end
+    opts = opts or {}
 
-    local main = M.find_main_part(entry.inst)
-    entry.main_part = main
+    local target = opts.part or entry.main_part or entry.root
+    if not target or not env.is_valid(target) then
+        target = entry.inst or entry.model
+    end
+    if not target or not env.is_valid(target) then return entry end
 
+    if opts.aabb_inst and env.is_valid(opts.aabb_inst) then
+        local aabb = M.read_parts_aabb(opts.aabb_inst, opts.max_parts)
+        if aabb then
+            entry.main_part = M.find_main_part(opts.aabb_inst) or target
+            set_label_from_box(entry, aabb)
+            return entry
+        end
+    end
+
+    if M.is_part(target) then
+        entry.main_part = target
+        local box = M.read_part_box(target)
+        if box then
+            set_label_from_box(entry, box)
+        else
+            local pos = target.Position
+            if pos then set_label_from_pos(entry, pos) end
+        end
+        return entry
+    end
+
+    entry.main_part = M.find_main_part(target)
+    local main = entry.main_part
     if main then
         local box = M.read_part_box(main)
-        entry.box = box
         if box then
-            entry.lx = box.x
-            entry.ly = box.y + box.hy + 0.25
-            entry.lz = box.z
+            set_label_from_box(entry, box)
         else
             local pos = main.Position
-            if pos then
-                entry.lx = vec3(pos, "x")
-                entry.ly = vec3(pos, "y")
-                entry.lz = vec3(pos, "z")
-            end
+            if pos then set_label_from_pos(entry, pos) end
         end
     end
 
     return entry
 end
 
+-- Cheap live refresh: main/root part only (no GetBoundingBox).
 function M.refresh_entry_position(entry)
-    if not entry or not env.is_valid(entry.inst) then return false end
+    if not entry then return false end
 
-    if entry.main_part and env.is_valid(entry.main_part) then
-        local box = M.read_part_box(entry.main_part)
-        if box then
-            entry.box = box
-            entry.lx = box.x
-            entry.ly = box.y + box.hy + 0.25
-            entry.lz = box.z
-            return true
+    local part = entry.main_part
+    if not part or not env.is_valid(part) then
+        part = entry.root
+    end
+    if not part or not env.is_valid(part) then
+        local inst = entry.inst or entry.model
+        if inst and env.is_valid(inst) then
+            part = M.find_main_part(inst)
+            entry.main_part = part
         end
     end
 
-    M.hydrate_entry(entry)
-
-    if not entry.lx and entry.root and env.is_valid(entry.root) then
-        local box = M.read_part_box(entry.root)
+    if part and env.is_valid(part) then
+        local box = M.read_part_box(part)
         if box then
-            entry.box = box
-            entry.main_part = entry.root
-            entry.lx = box.x
-            entry.ly = box.y + box.hy + 0.25
-            entry.lz = box.z
+            set_label_from_box(entry, box)
             return true
         end
-        local ok, pos = pcall(function() return entry.root.Position end)
+        local ok, pos = pcall(function() return part.Position end)
         if ok and pos then
-            entry.lx = pos.X or pos.x
-            entry.ly = (pos.Y or pos.y) + 0.25
-            entry.lz = pos.Z or pos.z
+            set_label_from_pos(entry, pos)
             return true
         end
     end
 
     return entry.lx ~= nil
+end
+
+function M.refresh_entry_bounds(entry)
+    if not entry then return false end
+    local constants = July.require("core.constants")
+
+    if entry.is_drop then
+        local part = entry.root or entry.main_part
+        if part and env.is_valid(part) then
+            entry.main_part = part
+            local box = M.read_part_box(part)
+            if box then
+                set_label_from_box(entry, box)
+                return true
+            end
+        end
+        return false
+    end
+
+    local inst = entry.inst or entry.model
+    if inst and env.is_valid(inst) then
+        local aabb = M.read_parts_aabb(inst, constants.LOOT_MAX_PARTS or 8)
+        if aabb then
+            entry.main_part = M.find_main_part(inst) or entry.main_part
+            set_label_from_box(entry, aabb)
+            return true
+        end
+        return M.refresh_entry_position(entry)
+    end
+
+    return false
 end
 
 function M.entry_coords(entry)
@@ -4931,6 +6723,7 @@ return M
 
 end)()
 
+-- ── game/loot_scan.lua ──
 July._mods["game.loot_scan"] = (function()
 local constants = July.require("core.constants")
 local scan_yield = July.require("core.scan_yield")
@@ -4942,6 +6735,9 @@ local cache = July.require("core.cache")
 local settings = July.require("core.settings")
 
 local M = {}
+
+M._static = {}
+M._drops = {}
 
 local loot_by_model = {}
 local loot_cache = {}
@@ -4995,11 +6791,30 @@ local function get_door_info(model)
 end
 
 local function hydrate_loot_entry(entry)
-    if not entry or not entry.model then return end
-    entry.inst = entry.model
-
+    if not entry then return end
     local esp_scan = July.require("game.esp_scan")
-    esp_scan.hydrate_entry(entry)
+
+    if entry.is_drop then
+        if entry.root and env.is_valid(entry.root) then
+            entry.main_part = entry.root
+            esp_scan.hydrate_entry(entry, { part = entry.root })
+            local weld = entry.inst and entry.inst ~= entry.root and entry.inst.ClassName == "Model" and entry.inst
+            if not entry.box and weld and env.is_valid(weld) then
+                local aabb = esp_scan.read_parts_aabb(weld, 4)
+                if aabb then
+                    entry.box = aabb
+                end
+            end
+        end
+        return
+    end
+
+    if not entry.model or not env.is_valid(entry.model) then return end
+    entry.inst = entry.model
+    esp_scan.hydrate_entry(entry, {
+        aabb_inst = entry.model,
+        max_parts = constants.LOOT_MAX_PARTS,
+    })
 
     if not entry.lx and entry.root and env.is_valid(entry.root) then
         local box = esp_scan.read_part_box(entry.root)
@@ -5009,15 +6824,15 @@ local function hydrate_loot_entry(entry)
             entry.lx = box.x
             entry.ly = box.y + box.hy + 0.25
             entry.lz = box.z
-        else
-            local ok, pos = pcall(function() return entry.root.Position end)
-            if ok and pos then
-                entry.lx = pos.X or pos.x
-                entry.ly = (pos.Y or pos.y) + 0.25
-                entry.lz = pos.Z or pos.z
-            end
         end
     end
+end
+
+local function drop_entry_alive(entry)
+    if not entry then return false end
+    if entry.root and env.is_valid(entry.root) then return true end
+    if entry.inst and env.is_valid(entry.inst) then return true end
+    return false
 end
 
 local function get_or_create_loot(model, root, category, is_open_inst, is_locked_inst)
@@ -5447,7 +7262,7 @@ end
 local function get_or_create_drop(model, root, category, display_name)
     local entry = loot_by_model[model]
     if entry then
-        if env.is_valid(entry.model) and env.is_valid(entry.root) then
+        if drop_entry_alive(entry) then
             entry.category = category or entry.category
             entry.display_name = display_name
             entry.tier_color = tier_util.get_esp_color(display_name)
@@ -5489,13 +7304,122 @@ local function register_drop_entry(cache_key, root, category, display_name, out,
     out[#out + 1] = get_or_create_drop(cache_key, root, category, display_name)
 end
 
+local function weld_is_world_drop(weld)
+    if not weld or not env.is_valid(weld) then return false end
+    if is_player_owned(weld) then return false end
+    if is_character_ancestor(weld) then return false end
+    if is_on_viewmodel(weld) then return false end
+    if is_in_equipped_weld_pool(weld) then return false end
+    return is_in_world_weld_temp(weld) or is_world_drop_model(weld)
+end
+
+local function get_weld_temp_root()
+    return get_weld_temp_folder()
+end
+
+local function is_skip_weld_child(name)
+    return name == "Highlight" or name == "thermalTemplate"
+end
+
+local function grid_folder_from_model(model)
+    if not model then return nil end
+    local link = object_value_target(model, "linkItemFolder")
+    if not link then return nil end
+    local cur = link
+    for _ = 1, 10 do
+        if not cur then break end
+        if is_grid_item_folder(cur) then return cur end
+        cur = cur.Parent
+    end
+    return nil
+end
+
+local function clean_item_name(name)
+    if not name or name == "" then return nil end
+    name = name:gsub("%s*%(%d+%)$", "")
+    if name == "WeldObjects" or name == "" then return nil end
+    return name
+end
+
+local function item_name_from_model(model, grid_folder)
+    if grid_folder then
+        local grid_name = resolve_grid_folder_name(grid_folder)
+        if grid_name and grid_name ~= "" then return grid_name end
+    end
+    local resolved = resolve_drop_name(model)
+    if resolved and resolved ~= "" then return resolved end
+    return clean_item_name(model and model.Name)
+end
+
+local function register_item_drop(model, grid_folder, out, seen)
+    if not model or not env.is_valid(model) or seen[model] then return end
+    if is_player_owned(model) or is_on_viewmodel(model) or is_character_ancestor(model) then return end
+    if is_in_equipped_weld_pool(model) then return end
+
+    local name = item_name_from_model(model, grid_folder)
+    if not name or name == "" then return end
+
+    local root = resolve_drop_root(model)
+    if not root or not env.is_valid(root) then return end
+
+    local category = categorize_drop(name, grid_folder)
+    register_drop_entry(model, root, category, name, out, seen)
+end
+
+local function scan_weld_container(container, out, seen, depth)
+    if not container or not env.is_valid(container) or depth > 4 then return end
+
+    local grid_folder = grid_folder_from_model(container)
+    if grid_folder then
+        register_item_drop(container, grid_folder, out, seen)
+        return
+    end
+
+    if container.ClassName == "Model" and not is_skip_weld_child(container.Name) then
+        local name = container.Name
+        if object_value_target(container, "linkItemFolder")
+            or tier_util.is_known_item(name)
+            or tier_util.is_gun_name(name)
+            or tier_util.is_keycard(name) then
+            register_item_drop(container, nil, out, seen)
+            return
+        end
+    end
+
+    local ok, children = pcall(function() return container:GetChildren() end)
+    if not ok or not children then return end
+
+    for i = 1, #children do
+        local child = children[i]
+        if child.ClassName == "Model" then
+            register_item_drop(child, grid_folder_from_model(child), out, seen)
+        elseif child.ClassName == "Folder" or child.ClassName == "Model" then
+            scan_weld_container(child, out, seen, depth + 1)
+        end
+    end
+end
+
+local function collect_weld_temp_drops(out, seen)
+    local temp = get_weld_temp_root()
+    if not temp or not env.is_valid(temp) then return end
+
+    local ok, children = pcall(function() return temp:GetChildren() end)
+    if not ok or not children then return end
+
+    for i = 1, #children do
+        local child = children[i]
+        if not is_skip_weld_child(child.Name) then
+            scan_weld_container(child, out, seen, 0)
+        end
+    end
+end
+
 local function register_grid_drop(folder, out, seen)
     if not folder or not env.is_valid(folder) or seen[folder] then return end
-    if should_skip_drop_inst(folder) then return end
 
     local weld = object_value_target(folder, "currentWeldModel")
     if not weld or not env.is_valid(weld) then return end
-    if not is_world_drop_model(weld) then return end
+    if not weld_is_world_drop(weld) then return end
 
     local name = resolve_drop_name_from_sources(weld, folder)
     if not name or name == "" then return end
@@ -5512,7 +7436,7 @@ local function register_weld_drop(weld_model, out, seen)
     if should_skip_drop_inst(weld_model) then return end
     if not is_world_drop_model(weld_model) then return end
 
-    local grid_folder = find_grid_folder_for_weld(weld_model)
+    local grid_folder = grid_folder_from_model(weld_model) or find_grid_folder_for_weld(weld_model)
     if grid_folder then
         register_grid_drop(grid_folder, out, seen)
         return
@@ -5556,7 +7480,7 @@ local function register_drop_instance(inst, out, seen)
         return
     end
 
-    local grid_folder = find_grid_folder_for_weld(inst)
+    local grid_folder = grid_folder_from_model(inst) or find_grid_folder_for_weld(inst)
     local name = resolve_drop_name_from_sources(inst, grid_folder)
     if not name or name == "" then
         if cls == "Tool" then
@@ -5598,41 +7522,8 @@ local function collect_drops(container, out, seen, depth)
     end
 end
 
-local function collect_grid_world_drops(out, seen)
-    local grid = get_grid_item_folder()
-    if not grid or not env.is_valid(grid) then return end
-
-    local ok, children = pcall(function() return grid:GetChildren() end)
-    if not ok or not children then return end
-
-    for i = 1, #children do
-        scan_yield.yield()
-        local folder = children[i]
-        if folder.ClassName == "Folder" then
-            register_grid_drop(folder, out, seen)
-        end
-    end
-end
-
-local function collect_weld_temp_drops(out, seen)
-    local temp = get_weld_temp_folder()
-    if not temp or not env.is_valid(temp) then return end
-
-    local ok, children = pcall(function() return temp:GetChildren() end)
-    if not ok or not children then return end
-
-    for i = 1, #children do
-        scan_yield.yield()
-        local child = children[i]
-        if child.ClassName == "Model" then
-            register_weld_drop(child, out, seen)
-        end
-    end
-end
-
 local function collect_objects_drops_deep(out, seen)
     collect_weld_temp_drops(out, seen)
-    collect_grid_world_drops(out, seen)
 
     local folder = get_objects_folder()
     if folder and env.is_valid(folder) then
@@ -5644,35 +7535,67 @@ local function collect_objects_drops(out, seen)
     collect_objects_drops_deep(out, seen)
 end
 
+local function rebuild_draw_cache()
+    cache.loot = {}
+    for i = 1, #M._static do
+        cache.loot[#cache.loot + 1] = M._static[i]
+    end
+    for i = 1, #M._drops do
+        cache.loot[#cache.loot + 1] = M._drops[i]
+    end
+    loot_cache = cache.loot
+    if loot_live_cursor > #loot_cache then
+        loot_live_cursor = 1
+    end
+end
+
+local function split_static_drops(list)
+    local static_out = {}
+    local drops_out = {}
+    for i = 1, #list do
+        local entry = list[i]
+        if entry.is_drop then
+            drops_out[#drops_out + 1] = entry
+        else
+            static_out[#static_out + 1] = entry
+        end
+    end
+    return static_out, drops_out
+end
+
+local drop_live_cursor = 1
+local static_bounds_cursor = 1
+
+function M.tick_static_bounds(batch)
+    batch = batch or constants.LOOT_PRUNE_BATCH or 8
+    if #M._static == 0 then return end
+
+    local esp_scan = July.require("game.esp_scan")
+    local n = #M._static
+    if static_bounds_cursor > n then static_bounds_cursor = 1 end
+
+    for _ = 1, math.min(batch, n) do
+        local entry = M._static[static_bounds_cursor]
+        if entry and not entry.is_drop and env.is_valid(entry.model) then
+            esp_scan.refresh_entry_bounds(entry)
+        end
+        static_bounds_cursor = static_bounds_cursor + 1
+        if static_bounds_cursor > n then static_bounds_cursor = 1 end
+    end
+end
+
 local function preserve_drops(out)
-    for i = 1, #loot_cache do
-        local entry = loot_cache[i]
-        if entry.is_drop and env.is_valid(entry.model) and env.is_valid(entry.root) then
+    for i = 1, #M._drops do
+        local entry = M._drops[i]
+        if entry and entry.is_drop and drop_entry_alive(entry) then
             out[#out + 1] = entry
         end
     end
 end
 
 local function merge_drop_cache(new_drops)
-    local kept = {}
-    for i = 1, #loot_cache do
-        if not loot_cache[i].is_drop then
-            kept[#kept + 1] = loot_cache[i]
-        end
-    end
-    for i = 1, #new_drops do
-        kept[#kept + 1] = new_drops[i]
-    end
-
-    local new_by_model = {}
-    for i = 1, #kept do
-        new_by_model[kept[i].model] = kept[i]
-    end
-    loot_by_model = new_by_model
-    loot_cache = kept
-    if loot_live_cursor > #loot_cache then
-        loot_live_cursor = 1
-    end
+    M._drops = new_drops or {}
+    rebuild_draw_cache()
 end
 
 local function collect_loot(container, out, depth)
@@ -5817,15 +7740,17 @@ function M.refresh(force)
 
     preserve_drops(out)
 
+    local static_out, drops_in_scan = split_static_drops(out)
+    M._static = static_out
+    M._drops = drops_in_scan
+
     local new_by_model = {}
-    for i = 1, #out do
-        new_by_model[out[i].model] = out[i]
+    rebuild_draw_cache()
+    for i = 1, #loot_cache do
+        new_by_model[loot_cache[i].model] = loot_cache[i]
     end
     loot_by_model = new_by_model
-    loot_cache = out
-    if loot_live_cursor > #loot_cache then
-        loot_live_cursor = 1
-    end
+    cache.stats.last_loot_scan = utility and utility.get_tick_count and utility.get_tick_count() or 0
 end
 
 function M.refresh_drops(force)
@@ -5833,12 +7758,84 @@ function M.refresh_drops(force)
     if not force and (now - drop_cache_stamp) < constants.DROP_SCAN_INTERVAL then return end
     drop_cache_stamp = now
 
-    rebuild_grid_weld_lookup()
-
     local out = {}
     local seen = {}
-    collect_objects_drops(out, seen)
+    collect_objects_drops_deep(out, seen)
     merge_drop_cache(out)
+end
+
+function M.begin_drops_scan()
+    return { ci = 1, children = nil, seen = {}, out = {} }
+end
+
+function M.step_drops_scan(state, batch)
+    if not state.children then
+        state.children = {}
+        local temp = get_weld_temp_root()
+        if temp and env.is_valid(temp) then
+            local ok, kids = pcall(function() return temp:GetChildren() end)
+            if ok and kids then state.children = kids end
+        end
+        state.ci = 1
+    end
+
+    local processed = 0
+    while processed < batch and state.ci <= #state.children do
+        local child = state.children[state.ci]
+        state.ci = state.ci + 1
+        processed = processed + 1
+        if child and env.is_valid(child) and not is_skip_weld_child(child.Name) then
+            scan_weld_container(child, state.out, state.seen, 0)
+        end
+    end
+
+    if state.ci <= #state.children then
+        return false
+    end
+
+    if not state.objects_done then
+        state.objects_done = true
+        local folder = get_objects_folder()
+        if folder and env.is_valid(folder) then
+            collect_drops(folder, state.out, state.seen, 0)
+        end
+    end
+
+    return true
+end
+
+function M.complete_drops_scan(state)
+    merge_drop_cache(state.out or {})
+    drop_cache_stamp = os.clock()
+end
+
+function M.begin_static_scan()
+    return { co = coroutine.create(function()
+        M.refresh(true)
+    end) }
+end
+
+function M.step_static_scan(state, batch)
+    if not state or not state.co then return true end
+    if coroutine.status(state.co) == "dead" then return true end
+
+    local scan_async = July.require("core.scan_async")
+    local budget = math.max(2, math.floor((constants.SCAN_BUDGET_MS or 4) * 0.75))
+    for _ = 1, math.max(1, math.floor(batch / 6)) do
+        if scan_async.tick(state.co, budget) then
+            return true
+        end
+    end
+    return coroutine.status(state.co) == "dead"
+end
+
+function M.complete_static_scan(state)
+    local new_by_model = {}
+    for i = 1, #loot_cache do
+        new_by_model[loot_cache[i].model] = loot_cache[i]
+    end
+    loot_by_model = new_by_model
+    cache.stats.last_loot_scan = utility and utility.get_tick_count and utility.get_tick_count() or 0
 end
 
 function M.compact_invalid(force)
@@ -5847,24 +7844,15 @@ function M.compact_invalid(force)
     if not force and (now - last_compact) < interval then return end
     last_compact = now
 
-    local i, n = 1, #loot_cache
-    while i <= n do
-        local loot = loot_cache[i]
-        if not loot or not env.is_valid(loot.model) or not env.is_valid(loot.root) then
-            if loot and loot.model then
-                loot_by_model[loot.model] = nil
-            end
-            loot_cache[i] = loot_cache[n]
-            loot_cache[n] = nil
-            n = n - 1
-        else
-            i = i + 1
-        end
-    end
+    cache.prune_invalid(M._static)
+    cache.prune_invalid(M._drops)
+    rebuild_draw_cache()
 
-    if loot_live_cursor > n then
-        loot_live_cursor = 1
+    local new_by_model = {}
+    for i = 1, #loot_cache do
+        new_by_model[loot_cache[i].model] = loot_cache[i]
     end
+    loot_by_model = new_by_model
 end
 
 local function combat_active()
@@ -5872,33 +7860,48 @@ local function combat_active()
         and settings.enabled("havoc_aimbot_keybind")
 end
 
-function M.refresh_live()
+-- April-style: prune + refresh static positions on interval.
+function M.tick_cache()
+    if cache.should_refresh_positions(combat_active()) then
+        cache.prune_invalid(M._static)
+        cache.prune_invalid(M._drops)
+        rebuild_draw_cache()
+    end
+end
+
+local drop_pos_cursor = 1
+
+function M.tick_drop_positions(batch)
+    batch = batch or constants.DROP_LIVE_BATCH or 24
+    local n = #M._drops
+    if n == 0 then return end
+
+    local esp_scan = July.require("game.esp_scan")
+    if drop_pos_cursor > n then drop_pos_cursor = 1 end
+
+    for _ = 1, math.min(batch, n) do
+        local entry = M._drops[drop_pos_cursor]
+        if entry and drop_entry_alive(entry) then
+            esp_scan.refresh_entry_position(entry)
+        end
+        drop_pos_cursor = drop_pos_cursor + 1
+        if drop_pos_cursor > n then drop_pos_cursor = 1 end
+    end
+end
+
+function M.tick_drops_live(batch)
+    M.tick_drop_positions(batch)
+end
+
+-- Batched door/crate open state only — cheap between position refreshes.
+function M.tick_live_state()
     local n = #loot_cache
     if n == 0 then return end
 
     if loot_live_cursor > n then loot_live_cursor = 1 end
 
-    local prune_batch = constants.LOOT_PRUNE_BATCH or 24
-    local pruned = 0
-    while pruned < prune_batch and n > 0 do
-        if loot_live_cursor > n then loot_live_cursor = 1 end
-        local loot = loot_cache[loot_live_cursor]
-        if not loot or not env.is_valid(loot.model) or not env.is_valid(loot.root) then
-            if loot and loot.model then
-                loot_by_model[loot.model] = nil
-            end
-            loot_cache[loot_live_cursor] = loot_cache[n]
-            loot_cache[n] = nil
-            n = n - 1
-        else
-            loot_live_cursor = loot_live_cursor + 1
-        end
-        pruned = pruned + 1
-    end
-
-    local refresh_pos = cache.should_refresh_positions(combat_active())
-    local remaining = math.min(constants.LOOT_LIVE_BATCH_SIZE, n)
-    while remaining > 0 do
+    local batch = math.min(constants.LOOT_LIVE_BATCH_SIZE or 24, n)
+    for _ = 1, batch do
         local loot = loot_cache[loot_live_cursor]
         if loot and env.is_valid(loot.model) and env.is_valid(loot.root) then
             if not loot.is_drop and loot.is_open_inst and env.is_valid(loot.is_open_inst) then
@@ -5917,16 +7920,15 @@ function M.refresh_live()
                     end
                 end
             end
-            if refresh_pos and loot.is_drop then
-                local esp_scan = July.require("game.esp_scan")
-                esp_scan.refresh_entry_position(loot)
-            end
         end
 
         loot_live_cursor = loot_live_cursor + 1
         if loot_live_cursor > n then loot_live_cursor = 1 end
-        remaining = remaining - 1
     end
+end
+
+function M.refresh_live()
+    M.tick_live_state()
 end
 
 local static_co = nil
@@ -5938,7 +7940,10 @@ function M.invalidate()
     grid_weld_lookup = nil
     grid_weld_lookup_stamp = -9999
     loot_by_model = {}
+    M._static = {}
+    M._drops = {}
     loot_cache = {}
+    cache.loot = {}
     loot_cache_stamp = -9998
     drop_cache_stamp = -9996
     loot_live_cursor = 1
@@ -5975,20 +7980,28 @@ function M.tick_async(budget_ms)
 end
 
 function M.get_cache()
-    return loot_cache
+    return cache.loot
+end
+
+function M.get_drops()
+    return M._drops
 end
 
 return M
 
 end)()
 
+-- ── game/trap_scan.lua ──
 July._mods["game.trap_scan"] = (function()
 local constants = July.require("core.constants")
 local scan_yield = July.require("core.scan_yield")
 local trap_types = July.require("game.trap_types")
 local env = July.require("core.env")
+local cache = July.require("core.cache")
 
 local M = {}
+
+M._entries = {}
 
 local trap_cache = {}
 local trap_cache_stamp = -9997
@@ -6102,7 +8115,7 @@ local function collect_tripmines(container, out, depth)
             local mainPart = child:FindFirstChild("mainPart")
             local connectedPart = child:FindFirstChild("connectedPart")
             if mainPart and mainPart:IsA("BasePart") then
-                add_trap_entry(out, mainPart, child, trap_types.TRAP_TYPES[1], connectedPart)
+                add_trap_entry(out, mainPart, child, trap_types.get("trap_tripmine"), connectedPart)
             end
         elseif child.ClassName == "Folder" then
             collect_tripmines(child, out, depth + 1)
@@ -6121,7 +8134,7 @@ local function collect_mine_hitboxes(container, out, depth)
 
         local child = children[i]
         if child:IsA("BasePart") and child.Name == "MineHitbox" then
-            add_trap_entry(out, child, child, trap_types.TRAP_TYPES[2], nil)
+            add_trap_entry(out, child, child, trap_types.get("trap_mine"), nil)
         elseif child.ClassName == "Folder" or child:IsA("BasePart") then
             collect_mine_hitboxes(child, out, depth + 1)
         end
@@ -6138,34 +8151,16 @@ local function collect_alarms(container, out, depth)
         scan_yield.yield()
 
         local child = children[i]
-        if child.ClassName == "Model" and child.Name:find("Alarm", 1, true) then
+        if child.ClassName == "Model"
+            and child.Name:find("Alarm", 1, true)
+            and not child.Name:find("Airstrike", 1, true)
+        then
             local root = child:FindFirstChildWhichIsA("BasePart")
             if root then
-                add_trap_entry(out, root, child, trap_types.TRAP_TYPES[3], nil)
+                add_trap_entry(out, root, child, trap_types.get("trap_alarm"), nil)
             end
         elseif child.ClassName == "Folder" or child.ClassName == "Model" then
             collect_alarms(child, out, depth + 1)
-        end
-    end
-end
-
-local function collect_airstrike_alarms(container, out, depth)
-    if depth > constants.TRAP_SCAN_DEPTH then return end
-
-    local ok, children = pcall(function() return container:GetChildren() end)
-    if not ok or not children then return end
-
-    for i = 1, #children do
-        scan_yield.yield()
-
-        local child = children[i]
-        if child.ClassName == "Model" and child.Name:find("AirstrikeAlarm", 1, true) then
-            local root = child:FindFirstChildWhichIsA("BasePart")
-            if root then
-                add_trap_entry(out, root, child, trap_types.TRAP_TYPES[4], nil)
-            end
-        elseif child.ClassName == "Folder" or child.ClassName == "Model" then
-            collect_airstrike_alarms(child, out, depth + 1)
         end
     end
 end
@@ -6184,7 +8179,7 @@ local function collect_explosive_barrels(container, out, depth)
             local root = child:FindFirstChild("Base")
             if not root then root = child:FindFirstChildWhichIsA("BasePart") end
             if root then
-                add_trap_entry(out, root, child, trap_types.TRAP_TYPES[5], nil)
+                add_trap_entry(out, root, child, trap_types.get("trap_barrel"), nil)
             end
         end
     end
@@ -6203,7 +8198,7 @@ local function collect_sentries(container, out, depth)
         if child.ClassName == "Model" then
             local root = child:FindFirstChild("Base")
             if root and root:IsA("BasePart") then
-                add_trap_entry(out, root, child, trap_types.TRAP_TYPES[6], nil)
+                add_trap_entry(out, root, child, trap_types.get("trap_sentry"), nil)
             end
         end
     end
@@ -6222,10 +8217,10 @@ local function collect_toxic_gas(container, out, depth)
         if child.ClassName == "Model" then
             local root = child:FindFirstChildWhichIsA("BasePart") or child:FindFirstChildWhichIsA("MeshPart")
             if root then
-                add_trap_entry(out, root, child, trap_types.TRAP_TYPES[7], nil)
+                add_trap_entry(out, root, child, trap_types.get("trap_gas"), nil)
             end
         elseif child:IsA("MeshPart") and depth <= 1 then
-            add_trap_entry(out, child, child, trap_types.TRAP_TYPES[7], nil)
+            add_trap_entry(out, child, child, trap_types.get("trap_gas"), nil)
         elseif child.ClassName == "Folder" then
             collect_toxic_gas(child, out, depth + 1)
         end
@@ -6267,10 +8262,6 @@ function M.refresh(force)
         if minefields then
             collect_mine_hitboxes(minefields, out, 0)
         end
-        local airstrike = event_objects:FindFirstChild("ST_AirstrikeAlarms")
-        if airstrike then
-            collect_airstrike_alarms(airstrike, out, 0)
-        end
         local barrels = event_objects:FindFirstChild("ExplosiveBarrels")
         if barrels then
             collect_explosive_barrels(barrels, out, 0)
@@ -6286,47 +8277,76 @@ function M.refresh(force)
     end
 
     trap_folders_found = any_found
-    trap_cache = out
+    M._entries = out
+    cache.traps = out
+    trap_cache = cache.traps
+    cache.stats.last_trap_scan = utility and utility.get_tick_count and utility.get_tick_count() or 0
     if trap_live_cursor > #trap_cache then
         trap_live_cursor = 1
     end
 end
 
-function M.refresh_live()
-    local n = #trap_cache
+local function combat_active()
+    local settings = July.require("core.settings")
+    return settings.bool("havoc_aimbot_enabled", false)
+        and settings.enabled("havoc_aimbot_keybind")
+end
+
+local trap_pos_cursor = 1
+
+function M.tick_positions(batch)
+    batch = batch or constants.TRAP_LIVE_BATCH or 16
+    local n = #M._entries
     if n == 0 then return end
 
-    local cache = July.require("core.cache")
-    local settings = July.require("core.settings")
-    local refresh_pos = cache.should_refresh_positions(
-        settings.bool("havoc_aimbot_enabled", false) and settings.enabled("havoc_aimbot_keybind")
-    )
+    if trap_pos_cursor > n then trap_pos_cursor = 1 end
 
-    local batch = constants.TRAP_LIVE_BATCH or 16
-    local checked = 0
-
-    while checked < batch and n > 0 do
-        if trap_live_cursor > n then trap_live_cursor = 1 end
-
-        local trap = trap_cache[trap_live_cursor]
-        if not trap or not env.is_valid(trap.root) or not env.is_valid(trap.model) then
-            trap_cache[trap_live_cursor] = trap_cache[n]
-            trap_cache[n] = nil
-            n = n - 1
-        else
-            if trap.extra and not env.is_valid(trap.extra) then
-                trap.extra = nil
+    for _ = 1, math.min(batch, n) do
+        local trap = M._entries[trap_pos_cursor]
+        if trap and trap.root and env.is_valid(trap.root) then
+            local ok_pos, pos = pcall(function() return trap.root.Position end)
+            if ok_pos and pos then
+                trap.pos = vec3_pos(pos)
             end
-            if refresh_pos then
-                local ok_pos, pos = pcall(function() return trap.root.Position end)
-                if ok_pos and pos then
-                    trap.pos = vec3_pos(pos)
-                end
-            end
-            trap_live_cursor = trap_live_cursor + 1
         end
-        checked = checked + 1
+        trap_pos_cursor = trap_pos_cursor + 1
+        if trap_pos_cursor > n then trap_pos_cursor = 1 end
     end
+end
+
+function M.tick_cache()
+    if not cache.should_refresh_positions(combat_active()) then return end
+
+    cache.prune_invalid(M._entries)
+    cache.traps = M._entries
+    trap_cache = cache.traps
+end
+
+function M.begin_scan()
+    return { co = coroutine.create(function()
+        M.refresh(true)
+    end) }
+end
+
+function M.step_scan(state, batch)
+    if not state or not state.co then return true end
+    if coroutine.status(state.co) == "dead" then return true end
+
+    local scan_async = July.require("core.scan_async")
+    local budget = math.max(2, math.floor((constants.SCAN_BUDGET_MS or 4) * 0.75))
+    for _ = 1, math.max(1, math.floor(batch / 6)) do
+        if scan_async.tick(state.co, budget) then
+            return true
+        end
+    end
+    return coroutine.status(state.co) == "dead"
+end
+
+function M.complete_scan(_state)
+end
+
+function M.refresh_live()
+    -- Legacy hook: position refresh moved to tick_cache (April interval pattern).
 end
 
 local refresh_co = nil
@@ -6348,6 +8368,8 @@ end
 
 function M.invalidate()
     trap_cache = {}
+    cache.traps = {}
+    M._entries = {}
     trap_cache_stamp = -9997
     trap_folders_found = false
     trap_live_cursor = 1
@@ -6358,32 +8380,21 @@ function M.invalidate()
 end
 
 function M.get_cache()
-    return trap_cache
+    return cache.traps
 end
 
 return M
 
 end)()
 
+-- ── core/esp_scheduler.lua ──
 July._mods["core.esp_scheduler"] = (function()
 local settings = July.require("core.settings")
 local constants = July.require("core.constants")
 local cache = July.require("core.cache")
 
 local M = {}
-
-local last = {
-    entity = 0,
-    loot = 0,
-    drops = 0,
-    trap = 0,
-    live = 0,
-    compact = 0,
-}
-
-local function now()
-    return os.clock()
-end
+local scans_ready = false
 
 local function combat_active()
     return settings.bool("havoc_aimbot_enabled", false)
@@ -6394,88 +8405,118 @@ local function any_loot_esp()
     return settings.enabled("havoc_loot_enabled")
 end
 
-local function any_trap_esp()
-    return settings.enabled("havoc_trap_enabled")
+local function any_item_esp()
+    return settings.enabled("havoc_item_enabled")
 end
 
-local function any_world_esp()
-    return any_loot_esp() or any_trap_esp()
+local function any_drop_esp()
+    return any_item_esp()
+end
+
+local function any_trap_esp()
+    return settings.enabled("havoc_trap_enabled")
 end
 
 local function any_npc_esp()
     return settings.enabled("havoc_npc_enabled")
 end
 
+function M.setup()
+    if scans_ready then return end
+    scans_ready = true
+
+    local iscan = July.require("core.incremental_scan")
+    local loot_scan = July.require("game.loot_scan")
+    local trap_scan = July.require("game.trap_scan")
+
+    iscan.configure({ budget_ms = 6, items_per_step = 16 })
+
+    local SCAN_MS = cache.WORKSPACE_SCAN_MS or 1000
+
+    iscan.register("loot_static", SCAN_MS, function()
+        return any_loot_esp()
+    end, loot_scan.begin_static_scan, loot_scan.step_static_scan, loot_scan.complete_static_scan, 0)
+
+    iscan.register("loot_drops", SCAN_MS, function()
+        return any_drop_esp()
+    end, loot_scan.begin_drops_scan, loot_scan.step_drops_scan, loot_scan.complete_drops_scan, 360)
+
+    iscan.register("traps", SCAN_MS, function()
+        return any_trap_esp()
+    end, trap_scan.begin_scan, trap_scan.step_scan, trap_scan.complete_scan, 480)
+end
+
 function M.tick(frame_counter)
+    M.setup()
+
     frame_counter = frame_counter or 0
-    local t = now()
     local entity_scan = July.require("game.entity_scan")
     local loot_scan = July.require("game.loot_scan")
     local trap_scan = July.require("game.trap_scan")
-    local scan_budget = constants.SCAN_BUDGET_MS or 4
+    local iscan = July.require("core.incremental_scan")
+
+    local t = os.clock()
+    local last = M._last or {}
+    M._last = last
 
     if any_npc_esp() then
         local entity_iv = combat_active() and 0.5 or constants.ENTITY_SCAN_INTERVAL
-        if t - last.entity >= entity_iv then
+        if t - (last.entity or 0) >= entity_iv then
             last.entity = t
             entity_scan.refresh()
         end
     end
 
+    iscan.tick()
+
     if any_loot_esp() then
-        if t - last.loot >= constants.LOOT_SCAN_INTERVAL then
-            last.loot = t
-            loot_scan.queue_refresh()
-        end
-        if t - last.drops >= constants.DROP_SCAN_INTERVAL then
-            last.drops = t
-            loot_scan.queue_refresh_drops()
-        end
-        if t - last.compact >= (constants.LOOT_COMPACT_INTERVAL or 8.0) then
+        if t - (last.compact or 0) >= (constants.LOOT_COMPACT_INTERVAL or 8.0) then
             last.compact = t
             loot_scan.compact_invalid(true)
         end
-        loot_scan.tick_async(scan_budget)
+        loot_scan.tick_live_state()
+        loot_scan.tick_static_bounds(constants.LOOT_PRUNE_BATCH or 8)
+    end
+
+    if any_drop_esp() then
+        loot_scan.tick_drop_positions(constants.DROP_LIVE_BATCH or 24)
+        if #loot_scan.get_drops() == 0 and not iscan.is_active("loot_drops") then
+            iscan.force("loot_drops")
+        end
+    end
+
+    if any_loot_esp() or any_drop_esp() then
+        loot_scan.tick_cache()
     end
 
     if any_trap_esp() then
-        if t - last.trap >= constants.TRAP_SCAN_INTERVAL then
-            last.trap = t
-            trap_scan.queue_refresh()
-        end
-        trap_scan.tick_async(scan_budget)
+        trap_scan.tick_positions(constants.TRAP_LIVE_BATCH or 16)
+        trap_scan.tick_cache()
     end
 
-    local pos_ms = combat_active() and constants.ESP_POS_CACHE_COMBAT_MS or constants.ESP_POS_CACHE_MS
-    local live_iv = (pos_ms or 120) / 1000
-    if t - last.live >= live_iv then
+    local live_iv = 0.15
+    if t - (last.live or 0) >= live_iv then
         last.live = t
         if any_npc_esp() then
             entity_scan.refresh_live()
-        end
-        if any_loot_esp() then
-            loot_scan.refresh_live()
-        end
-        if any_trap_esp() then
-            trap_scan.refresh_live()
         end
     end
 end
 
 function M.reset()
-    last.entity = 0
-    last.loot = 0
-    last.drops = 0
-    last.trap = 0
-    last.live = 0
-    last.compact = 0
+    M._last = {}
+    scans_ready = false
     cache.reset()
+    July.require("core.incremental_scan").force("loot_static")
+    July.require("core.incremental_scan").force("loot_drops")
+    July.require("core.incremental_scan").force("traps")
 end
 
 return M
 
 end)()
 
+-- ── core/esp_render.lua ──
 July._mods["core.esp_render"] = (function()
 local M = {}
 
@@ -6545,12 +8586,13 @@ return M
 
 end)()
 
+-- ── features/combat/combat_menu.lua ──
 July._mods["features.combat.combat_menu"] = (function()
 local M = {}
 
 local hitparts = July.require("game.hitparts")
 
-M.SILENT_BONES = hitparts.LABELS
+M.BONE_LABELS = hitparts.LABELS
 M.BONE_MAP = hitparts.MAP
 
 function M.bone_from_index(idx)
@@ -6561,6 +8603,7 @@ return M
 
 end)()
 
+-- ── menu/menu_defs.lua ──
 July._mods["menu.menu_defs"] = (function()
 local constants = July.require("core.constants")
 local loot_catalog = July.require("game.loot_catalog")
@@ -6571,33 +8614,30 @@ local menu_util = July.require("core.menu_util")
 local M = {}
 M.TAB = constants.TAB
 
-local function register_loot_type_toggles(TAB, G, parent)
+local function register_loot_sections(TAB, G, parent)
     local ids = {}
-    for i = 1, #loot_catalog.LOOT_TYPES do
-        local entry = loot_catalog.LOOT_TYPES[i]
-        menu.add_checkbox(TAB, G, entry.key, entry.display, true, {
-            parent = parent,
-            colorpicker = entry.color,
-        })
-        menu_util.COLOR_DEFAULTS[entry.key] = entry.color
-        ids[#ids + 1] = entry.key
+    for si = 1, #loot_catalog.LOOT_SECTIONS do
+        local sec = loot_catalog.LOOT_SECTIONS[si]
+        local labels = {}
+        local defaults = {}
+        for ii = 1, #(sec.keys or {}) do
+            local entry = loot_catalog.KEY_TO_ENTRY[sec.keys[ii]]
+            if entry then
+                labels[#labels + 1] = entry.display
+                defaults[#defaults + 1] = true
+            end
+        end
+        menu.add_multicombo(TAB, G, sec.multicombo, sec.label, labels, defaults, { parent = parent })
+        ids[#ids + 1] = sec.multicombo
+        for ii = 1, #(sec.keys or {}) do
+            local entry = loot_catalog.KEY_TO_ENTRY[sec.keys[ii]]
+            if entry then
+                menu.add_colorpicker(TAB, G, entry.key, entry.display, entry.color, { parent = parent })
+                menu_util.COLOR_DEFAULTS[entry.key] = entry.color
+                ids[#ids + 1] = entry.key
+            end
+        end
     end
-    for i = 1, #loot_catalog.DROP_TYPES do
-        local entry = loot_catalog.DROP_TYPES[i]
-        menu.add_checkbox(TAB, G, entry.key, entry.display, true, {
-            parent = parent,
-            colorpicker = entry.color,
-        })
-        menu_util.COLOR_DEFAULTS[entry.key] = entry.color
-        ids[#ids + 1] = entry.key
-    end
-    local body = loot_catalog.BODY_BAG_TYPE
-    menu.add_checkbox(TAB, G, body.key, body.display, true, {
-        parent = parent,
-        colorpicker = body.color,
-    })
-    menu_util.COLOR_DEFAULTS[body.key] = body.color
-    ids[#ids + 1] = body.key
     return ids
 end
 
@@ -6631,7 +8671,7 @@ function M.register_all()
 
     menu.add_checkbox(TAB, G.AIMBOT, P_AIM, "Enable Aimbot", false)
     menu_util.register_master_keybind(TAB, G.AIMBOT, P_AIM, P_AIM_KEY, "Aimbot Key")
-    menu.add_combo(TAB, G.AIMBOT, "havoc_aimbot_bone", "Aimbot Target Bone", combat_menu.SILENT_BONES, 1, { parent = P_AIM })
+    menu.add_combo(TAB, G.AIMBOT, "havoc_aimbot_bone", "Aimbot Target Bone", combat_menu.BONE_LABELS, 1, { parent = P_AIM })
     menu.add_combo(TAB, G.AIMBOT, "havoc_aimbot_target_type", "Aimbot Priority", { "Crosshair", "Distance" }, 0, { parent = P_AIM })
     menu.add_slider_int(TAB, G.AIMBOT, "havoc_aimbot_fov", "Aimbot FOV Radius", 10, 500, 150, { parent = P_AIM })
     menu.add_slider_int(TAB, G.AIMBOT, "havoc_aimbot_max_distance", "Aimbot Max Distance", 0, 3000, 3000, { parent = P_AIM })
@@ -6669,56 +8709,57 @@ function M.register_all()
         { parent = "havoc_npc_box", colorpicker = { 1.0, 1.0, 1.0, 0.35 } })
     menu.add_checkbox(TAB, G.NPC, "havoc_npc_name", "NPC Name", false,
         { parent = P_NPC, colorpicker = { 0.92, 0.92, 0.92, 1.0 } })
-    menu.add_slider_int(TAB, G.NPC, "havoc_npc_name_size", "NPC Name Size", 6, 24, 13, { parent = "havoc_npc_name" })
     menu.add_checkbox(TAB, G.NPC, "havoc_npc_distance", "NPC Distance", false,
         { parent = P_NPC, colorpicker = { 0.67, 0.67, 0.67, 1.0 } })
-    menu.add_slider_int(TAB, G.NPC, "havoc_npc_distance_size", "NPC Distance Size", 6, 18, 10, { parent = "havoc_npc_distance" })
     menu.add_checkbox(TAB, G.NPC, "havoc_npc_held_item", "NPC Held Item", false,
         { parent = P_NPC, colorpicker = { 1.0, 0.85, 0.4, 1.0 } })
-    menu.add_slider_int(TAB, G.NPC, "havoc_npc_held_item_size", "NPC Held Item Size", 6, 18, 10, { parent = "havoc_npc_held_item" })
     menu.add_checkbox(TAB, G.NPC, "havoc_npc_ammo", "NPC Ammo", false,
         { parent = P_NPC, colorpicker = { 0.55, 0.85, 1.0, 1.0 } })
-    menu.add_slider_int(TAB, G.NPC, "havoc_npc_ammo_size", "NPC Ammo Size", 6, 18, 9, { parent = "havoc_npc_ammo" })
     menu.add_checkbox(TAB, G.NPC, "havoc_npc_reloading", "NPC Reloading", false,
         { parent = P_NPC, colorpicker = { 1.0, 0.45, 0.2, 1.0 } })
-    menu.add_slider_int(TAB, G.NPC, "havoc_npc_reloading_size", "NPC Reloading Size", 6, 18, 9, { parent = "havoc_npc_reloading" })
     menu.add_checkbox(TAB, G.NPC, "havoc_npc_npc_type", "NPC Type Tag", false,
         { parent = P_NPC, colorpicker = { 1.0, 0.5, 0.0, 0.85 } })
-    menu.add_slider_int(TAB, G.NPC, "havoc_npc_npc_type_size", "NPC Type Tag Size", 6, 18, 9, { parent = "havoc_npc_npc_type" })
     menu.add_checkbox(TAB, G.NPC, "havoc_npc_health_bar", "NPC Health Bar", false, { parent = P_NPC })
     menu.add_checkbox(TAB, G.NPC, "havoc_npc_health_text", "NPC Health Text", false,
         { parent = P_NPC, colorpicker = { 0.3, 1.0, 0.4, 1.0 } })
-    menu.add_slider_int(TAB, G.NPC, "havoc_npc_health_text_size", "NPC Health Text Size", 6, 18, 8, { parent = "havoc_npc_health_text" })
     menu.add_checkbox(TAB, G.NPC, "havoc_npc_chams", "NPC Chams", false,
         { parent = P_NPC, colorpicker = { 1.0, 0.2, 0.2, 0.55 } })
     menu.add_combo(TAB, G.NPC, "havoc_npc_chams_style", "NPC Chams Style",
         { "Filled", "Wireframe" }, 0, { parent = "havoc_npc_chams" })
+    local npc_gpu_ids = July.require("features.visuals.npc_esp").register_gpu_menu(TAB, G.NPC, P_NPC)
     menu.add_checkbox(TAB, G.NPC, "havoc_npc_skeleton", "NPC Skeleton", false,
         { parent = P_NPC, colorpicker = { 1.0, 1.0, 1.0, 1.0 } })
     menu.add_checkbox(TAB, G.NPC, "havoc_npc_hide_dead", "NPC Hide Dead", false, { parent = P_NPC })
     menu.add_checkbox(TAB, G.NPC, "havoc_npc_rainbow", "NPC Rainbow", false, { parent = P_NPC })
+    menu.add_slider_int(TAB, G.NPC, "havoc_npc_name_size", "NPC Name Size", 6, 24, 13, { parent = P_NPC })
+    menu.add_slider_int(TAB, G.NPC, "havoc_npc_distance_size", "NPC Distance Size", 6, 18, 10, { parent = P_NPC })
+    menu.add_slider_int(TAB, G.NPC, "havoc_npc_held_item_size", "NPC Held Item Size", 6, 18, 10, { parent = P_NPC })
+    menu.add_slider_int(TAB, G.NPC, "havoc_npc_ammo_size", "NPC Ammo Size", 6, 18, 9, { parent = P_NPC })
+    menu.add_slider_int(TAB, G.NPC, "havoc_npc_reloading_size", "NPC Reloading Size", 6, 18, 9, { parent = P_NPC })
+    menu.add_slider_int(TAB, G.NPC, "havoc_npc_npc_type_size", "NPC Type Tag Size", 6, 18, 9, { parent = P_NPC })
+    menu.add_slider_int(TAB, G.NPC, "havoc_npc_health_text_size", "NPC Health Text Size", 6, 18, 8, { parent = P_NPC })
     menu.add_slider_int(TAB, G.NPC, "havoc_npc_max_distance", "NPC Max Distance", 0, 1000, 1000, { parent = P_NPC })
 
-    menu_util.bind_children(P_NPC, {
+    local npc_children = {
         "havoc_npc_show_scav", "havoc_npc_show_boss", "havoc_npc_show_sniper",
         "havoc_npc_box", "havoc_npc_name", "havoc_npc_distance", "havoc_npc_held_item", "havoc_npc_npc_type",
         "havoc_npc_health_bar", "havoc_npc_health_text", "havoc_npc_ammo", "havoc_npc_reloading",
         "havoc_npc_chams", "havoc_npc_skeleton",
-        "havoc_npc_hide_dead", "havoc_npc_rainbow", "havoc_npc_max_distance",
+        "havoc_npc_hide_dead", "havoc_npc_rainbow",
+        "havoc_npc_name_size", "havoc_npc_distance_size", "havoc_npc_held_item_size",
+        "havoc_npc_ammo_size", "havoc_npc_reloading_size", "havoc_npc_npc_type_size",
+        "havoc_npc_health_text_size", "havoc_npc_max_distance",
         P_NPC .. "_mode",
-    })
+    }
+    for i = 1, #(npc_gpu_ids or {}) do
+        npc_children[#npc_children + 1] = npc_gpu_ids[i]
+    end
+    menu_util.bind_children(P_NPC, npc_children)
     menu_util.bind_children("havoc_npc_box", { "havoc_npc_box_style", "havoc_npc_box_fill" })
-    menu_util.bind_children("havoc_npc_name", { "havoc_npc_name_size" })
-    menu_util.bind_children("havoc_npc_distance", { "havoc_npc_distance_size" })
-    menu_util.bind_children("havoc_npc_held_item", { "havoc_npc_held_item_size" })
-    menu_util.bind_children("havoc_npc_ammo", { "havoc_npc_ammo_size" })
-    menu_util.bind_children("havoc_npc_reloading", { "havoc_npc_reloading_size" })
-    menu_util.bind_children("havoc_npc_npc_type", { "havoc_npc_npc_type_size" })
-    menu_util.bind_children("havoc_npc_health_text", { "havoc_npc_health_text_size" })
     menu_util.bind_children("havoc_npc_chams", { "havoc_npc_chams_style" })
 
     menu_util.register_keybind(TAB, G.LOOT, P_LOOT, "Enable Loot ESP", false)
-    local loot_type_ids = register_loot_type_toggles(TAB, G.LOOT, P_LOOT)
+    local loot_type_ids = register_loot_sections(TAB, G.LOOT, P_LOOT)
     menu.add_checkbox(TAB, G.LOOT, "havoc_loot_box", "Loot Box", false,
         { parent = P_LOOT, colorpicker = { 1.0, 1.0, 1.0, 1.0 } })
     menu.add_combo(TAB, G.LOOT, "havoc_loot_box_style", "Loot Box Style",
@@ -6731,8 +8772,11 @@ function M.register_all()
         { "Show All", "Show Locked Only", "Show Unlocked Only", "Show Opened Only", "Show Unopened Only" }, 0,
         { parent = P_LOOT })
     menu.add_checkbox(TAB, G.LOOT, "havoc_loot_rainbow", "Loot Rainbow", false, { parent = P_LOOT })
-    menu.add_slider_int(TAB, G.LOOT, "havoc_loot_max_distance", "Loot Max Distance", 0, 2000, 500, { parent = P_LOOT })
     menu.add_slider_int(TAB, G.LOOT, "havoc_loot_text_size", "Loot Text Size", 1, 15, 13, { parent = P_LOOT })
+    menu.add_slider_int(TAB, G.LOOT, "havoc_loot_max_distance", "Loot Max Distance", 0, 2000, 500, { parent = P_LOOT })
+    local loot_gpu_ids = July.require("features.visuals.loot_esp").register_gpu_menu(TAB, G.LOOT, P_LOOT)
+
+    local item_type_ids = July.require("features.visuals.item_esp").register_menu(TAB, G.ITEMS)
 
     menu_util.register_keybind(TAB, G.TRAP, P_TRAP, "Enable Trap ESP", false)
     local trap_type_ids = register_trap_type_toggles(TAB, G.TRAP, P_TRAP)
@@ -6745,16 +8789,19 @@ function M.register_all()
         { "Same Line", "Below Name", "Left Of Name", "Right Of Name" }, 0, { parent = "havoc_trap_distance" })
     menu.add_checkbox(TAB, G.TRAP, "havoc_trap_marker", "Trap Position Marker", false, { parent = P_TRAP })
     menu.add_checkbox(TAB, G.TRAP, "havoc_trap_rainbow", "Trap Rainbow", false, { parent = P_TRAP })
-    menu.add_slider_int(TAB, G.TRAP, "havoc_trap_max_distance", "Trap Max Distance", 0, 2000, 500, { parent = P_TRAP })
     menu.add_slider_int(TAB, G.TRAP, "havoc_trap_text_size", "Trap Text Size", 1, 15, 13, { parent = P_TRAP })
+    menu.add_slider_int(TAB, G.TRAP, "havoc_trap_max_distance", "Trap Max Distance", 0, 2000, 500, { parent = P_TRAP })
 
     local loot_children = {
         "havoc_loot_box", "havoc_loot_distance", "havoc_loot_marker",
-        "havoc_loot_filter", "havoc_loot_rainbow", "havoc_loot_max_distance", "havoc_loot_text_size",
+        "havoc_loot_filter", "havoc_loot_rainbow", "havoc_loot_text_size", "havoc_loot_max_distance",
         P_LOOT .. "_mode",
     }
     for i = 1, #loot_type_ids do
         loot_children[#loot_children + 1] = loot_type_ids[i]
+    end
+    for i = 1, #(loot_gpu_ids or {}) do
+        loot_children[#loot_children + 1] = loot_gpu_ids[i]
     end
     menu_util.bind_children(P_LOOT, loot_children)
     menu_util.bind_children("havoc_loot_box", { "havoc_loot_box_style" })
@@ -6772,42 +8819,49 @@ function M.register_all()
     menu_util.bind_children("havoc_trap_box", { "havoc_trap_box_style" })
     menu_util.bind_children("havoc_trap_distance", { "havoc_trap_distance_pos" })
 
-    menu.add_checkbox(TAB, G.WORLD, "havoc_local_ammo", "Show Ammo", false,
+    menu.add_checkbox(TAB, G.MISC, "havoc_local_ammo", "Show Ammo", false,
         { colorpicker = { 0.55, 0.85, 1.0, 1.0 } })
-    menu.add_slider_int(TAB, G.WORLD, "havoc_local_ammo_size", "Ammo Text Size", 8, 24, 12,
-        { parent = "havoc_local_ammo" })
-    menu.add_checkbox(TAB, G.WORLD, "havoc_local_reloading", "Show Reloading", false,
+    menu.add_checkbox(TAB, G.MISC, "havoc_local_reloading", "Show Reloading", false,
         { colorpicker = { 1.0, 0.45, 0.2, 1.0 } })
-    menu.add_slider_int(TAB, G.WORLD, "havoc_local_reloading_size", "Reloading Text Size", 8, 24, 12,
-        { parent = "havoc_local_reloading" })
+    menu.add_slider_int(TAB, G.MISC, "havoc_local_ammo_size", "Ammo Text Size", 8, 24, 12)
+    menu.add_slider_int(TAB, G.MISC, "havoc_local_reloading_size", "Reloading Text Size", 8, 24, 12)
 
-    menu.add_checkbox(TAB, G.WORLD, "havoc_target_gear", "Target Gear Viewer", false)
-    menu.add_slider_int(TAB, G.WORLD, "havoc_target_gear_fov", "Target Gear FOV", 40, 400, 150,
+    menu.add_checkbox(TAB, G.MISC, "havoc_target_gear", "Target Gear Viewer", false)
+    menu.add_checkbox(TAB, G.MISC, "havoc_target_gear_target_players", "Gear Target Players", true,
         { parent = "havoc_target_gear" })
-    menu.add_slider_int(TAB, G.WORLD, "havoc_target_gear_gear_size", "Gear Icon Size", 32, 64, 48,
+    menu.add_checkbox(TAB, G.MISC, "havoc_target_gear_target_npcs", "Gear Target NPCs", true,
         { parent = "havoc_target_gear" })
-    menu.add_slider_int(TAB, G.WORLD, "havoc_target_gear_top", "Top Offset", 48, 160, 88,
-        { parent = "havoc_target_gear" })
+    menu.add_slider_int(TAB, G.MISC, "havoc_target_gear_fov", "Target Gear FOV", 40, 400, 150)
+    menu.add_slider_int(TAB, G.MISC, "havoc_target_gear_gear_size", "Gear Icon Size", 32, 64, 48)
+    menu.add_slider_int(TAB, G.MISC, "havoc_target_gear_top", "Top Offset", 48, 160, 88)
 
-    menu_util.bind_children("havoc_local_ammo", { "havoc_local_ammo_size" })
-    menu_util.bind_children("havoc_local_reloading", { "havoc_local_reloading_size" })
+    menu.add_checkbox(TAB, G.MISC, "havoc_exploit_no_weight", "No Weight Penalty", false)
+    menu.add_checkbox(TAB, G.MISC, "havoc_exploit_no_barbwire", "No Barbwire Slow", false)
+    menu.add_checkbox(TAB, G.MISC, "havoc_exploit_speed_boost", "Speed Boost", false)
+    menu.add_slider_int(TAB, G.MISC, "havoc_exploit_speed_boost_amt", "Speed Boost Amount", 0, 20, 4)
+    menu.add_checkbox(TAB, G.MISC, "havoc_exploit_max_pen", "Max Penetration (Held Gun)", false)
+    menu.add_checkbox(TAB, G.MISC, "havoc_exploit_no_sway", "No Weapon Sway", false)
+    menu.add_checkbox(TAB, G.MISC, "havoc_exploit_no_recoil", "No Recoil / Spread", false)
+    menu.add_checkbox(TAB, G.MISC, "havoc_exploit_no_breath", "No Breath Sway", false)
 
     menu_util.bind_children("havoc_target_gear", {
-        "havoc_target_gear_fov", "havoc_target_gear_gear_size", "havoc_target_gear_top",
+        "havoc_target_gear_target_players", "havoc_target_gear_target_npcs",
     })
+    menu_util.bind_children("havoc_exploit_speed_boost", { "havoc_exploit_speed_boost_amt" })
 
     menu_util.sync_masters()
     menu_util.seed_color_defaults()
 
-    M._config_registry = M.build_config_registry(loot_type_ids, trap_type_ids)
+    M._config_registry = M.build_config_registry(loot_type_ids, trap_type_ids, npc_gpu_ids, loot_gpu_ids, item_type_ids)
 end
 
-function M.build_config_registry(loot_type_ids, trap_type_ids)
+function M.build_config_registry(loot_type_ids, trap_type_ids, npc_gpu_ids, loot_gpu_ids, item_type_ids)
     local P_AIM = "havoc_aimbot_enabled"
     local P_AIM_KEY = "havoc_aimbot_keybind"
     local P_NPC = "havoc_npc_enabled"
     local P_LOOT = "havoc_loot_enabled"
     local P_TRAP = "havoc_trap_enabled"
+    local P_ITEM = "havoc_item_enabled"
 
     local value_ids = {
         P_AIM,
@@ -6828,7 +8882,9 @@ function M.build_config_registry(loot_type_ids, trap_type_ids)
         "havoc_npc_health_bar", "havoc_npc_health_text", "havoc_npc_health_text_size",
         "havoc_npc_chams", "havoc_npc_chams_style",
         "havoc_npc_skeleton", "havoc_npc_hide_dead", "havoc_npc_rainbow",
-        "havoc_npc_max_distance",
+        "havoc_npc_name_size", "havoc_npc_distance_size", "havoc_npc_held_item_size",
+        "havoc_npc_ammo_size", "havoc_npc_reloading_size", "havoc_npc_npc_type_size",
+        "havoc_npc_health_text_size", "havoc_npc_max_distance",
         P_LOOT, P_LOOT .. "_mode",
         "havoc_loot_box", "havoc_loot_box_style",
         "havoc_loot_distance", "havoc_loot_distance_pos",
@@ -6839,14 +8895,23 @@ function M.build_config_registry(loot_type_ids, trap_type_ids)
         "havoc_trap_distance", "havoc_trap_distance_pos",
         "havoc_trap_marker", "havoc_trap_rainbow",
         "havoc_trap_max_distance", "havoc_trap_text_size",
+        P_ITEM, P_ITEM .. "_mode",
+        "havoc_item_show_guns", "havoc_item_show_keycards", "havoc_item_show_body_bags",
+        "havoc_item_box", "havoc_item_box_style", "havoc_item_distance", "havoc_item_distance_pos",
+        "havoc_item_marker", "havoc_item_rainbow", "havoc_item_text_size", "havoc_item_max_distance",
         "havoc_local_ammo", "havoc_local_ammo_size",
         "havoc_local_reloading", "havoc_local_reloading_size",
-        "havoc_target_gear", "havoc_target_gear_fov", "havoc_target_gear_gear_size", "havoc_target_gear_top",
+        "havoc_target_gear", "havoc_target_gear_target_players", "havoc_target_gear_target_npcs",
+        "havoc_target_gear_fov", "havoc_target_gear_gear_size", "havoc_target_gear_top",
+        "havoc_exploit_no_weight", "havoc_exploit_no_barbwire", "havoc_exploit_speed_boost",
+        "havoc_exploit_speed_boost_amt", "havoc_exploit_max_pen", "havoc_exploit_no_sway",
+        "havoc_exploit_no_recoil", "havoc_exploit_no_breath",
     }
 
     local color_ids = {
         "havoc_aimbot_draw_fov", "havoc_aimbot_fill_fov", "havoc_aimbot_target_line",
         "havoc_loot_box",
+        "havoc_item_box",
         "havoc_trap_box",
         "havoc_npc_box", "havoc_npc_box_fill", "havoc_npc_name", "havoc_npc_distance",
         "havoc_npc_held_item", "havoc_npc_ammo", "havoc_npc_reloading", "havoc_npc_npc_type",
@@ -6863,6 +8928,18 @@ function M.build_config_registry(loot_type_ids, trap_type_ids)
         value_ids[#value_ids + 1] = trap_type_ids[i]
         color_ids[#color_ids + 1] = trap_type_ids[i]
     end
+    for i = 1, #(npc_gpu_ids or {}) do
+        value_ids[#value_ids + 1] = npc_gpu_ids[i]
+    end
+    for i = 1, #(loot_gpu_ids or {}) do
+        value_ids[#value_ids + 1] = loot_gpu_ids[i]
+    end
+    for i = 1, #(item_type_ids or {}) do
+        value_ids[#value_ids + 1] = item_type_ids[i]
+        if string.sub(item_type_ids[i], 1, 9) == "item_clr_" then
+            color_ids[#color_ids + 1] = item_type_ids[i]
+        end
+    end
 
     return {
         value_ids = value_ids,
@@ -6878,6 +8955,7 @@ return M
 
 end)()
 
+-- ── features/utility/config.lua ──
 July._mods["features.utility.config"] = (function()
 local constants = July.require("core.constants")
 local settings = July.require("core.settings")
@@ -7167,6 +9245,7 @@ return M
 
 end)()
 
+-- ── features/combat/targeting.lua ──
 July._mods["features.combat.targeting"] = (function()
 local settings = July.require("core.settings")
 local math_util = July.require("core.math_util")
@@ -7610,6 +9689,7 @@ return M
 
 end)()
 
+-- ── features/combat/aimbot.lua ──
 July._mods["features.combat.aimbot"] = (function()
 local settings = July.require("core.settings")
 local constants = July.require("core.constants")
@@ -8039,31 +10119,155 @@ return M
 
 end)()
 
+-- ── features/misc/exploits.lua ──
+July._mods["features.misc.exploits"] = (function()
+local settings = July.require("core.settings")
+local env = July.require("core.env")
+local weapons = July.require("game.weapons")
+
+local M = {}
+
+local BASE_JUMP = 50
+local last_speed = nil
+
+local function humanoid()
+    local lp = env.get_local_player()
+    if not lp then return nil end
+    local char = lp.Character or lp.character
+    if not char or not env.is_valid(char) then return nil end
+    return env.find_child(char, "Humanoid")
+end
+
+local function held_data_child(name)
+    local tool = weapons.get_held_weapon_inst()
+    if not tool then return nil end
+    local data = env.find_child(tool, "_data")
+    if not data then return nil end
+    return env.find_child(data, name)
+end
+
+local function set_num(child, value)
+    if not child or child.Value == nil then return end
+    pcall(function() child.Value = value end)
+end
+
+local function clear_attr(hum, name)
+    if not hum then return end
+    pcall(function()
+        if hum.GetAttribute and hum:GetAttribute(name) then
+            hum:SetAttribute(name, nil)
+        end
+    end)
+end
+
+function M.tick()
+    local hum = humanoid()
+
+    if settings.bool("havoc_exploit_no_weight", false) and hum then
+        local jp = hum.JumpPower or hum.jumpPower
+        if jp and jp > 0 and jp < BASE_JUMP then
+            pcall(function() hum.JumpPower = BASE_JUMP end)
+        end
+    end
+
+    if settings.bool("havoc_exploit_no_barbwire", false) and hum then
+        clear_attr(hum, "Barbwire")
+    end
+
+    if settings.bool("havoc_exploit_speed_boost", false) and hum then
+        local boost = settings.num("havoc_exploit_speed_boost_amt", 4)
+        local target = 16 + boost
+        local ws = hum.WalkSpeed or hum.walkSpeed
+        if ws and ws > 0 and ws < target then
+            pcall(function() hum.WalkSpeed = target end)
+            last_speed = target
+        end
+    end
+
+    if settings.bool("havoc_exploit_max_pen", false) then
+        local pen = held_data_child("penetrate_depth") or held_data_child("penetration")
+        if pen then set_num(pen, 50) end
+    end
+
+    if settings.bool("havoc_exploit_no_sway", false) then
+        local sway = held_data_child("sway") or held_data_child("swayAmount")
+        if sway then set_num(sway, 0) end
+    end
+
+    if settings.bool("havoc_exploit_no_recoil", false) then
+        local recoil = held_data_child("recoil") or held_data_child("recoilMult")
+        if recoil then set_num(recoil, 0) end
+        local spread = held_data_child("spread") or held_data_child("spreadMult")
+        if spread then set_num(spread, 0) end
+    end
+
+    if settings.bool("havoc_exploit_no_breath", false) then
+        local breath = held_data_child("breathSway") or held_data_child("holdBreathSway")
+        if breath then set_num(breath, 0) end
+    end
+end
+
+return M
+
+end)()
+
+-- ── features/visuals/npc_esp.lua ──
 July._mods["features.visuals.npc_esp"] = (function()
 local settings = July.require("core.settings")
 local color_util = July.require("core.color_util")
 local draw_util = July.require("core.draw_util")
 local entity_scan = July.require("game.entity_scan")
 local tier_util = July.require("game.tier_util")
-local npc_types = July.require("game.npc_types")
 local env = July.require("core.env")
+local gpu_chams = July.require("core.gpu_chams")
 
 local M = {}
 
-local function get_npc_type(ent)
-    return npc_types.display_type(ent)
+local P = "havoc_npc_enabled"
+local CHAMS_GPU = "havoc_npc_gpu_chams"
+local CHAMS_MODE = "havoc_npc_gpu_chams_mode"
+local CHAMS_COLOR = "havoc_npc_gpu_chams_color"
+
+local function npc_type(ent)
+    if ent.is_boss then return "Boss" end
+    if ent.is_sniper then return "Sniper" end
+    local name = ent.model and ent.model.Name or ""
+    if name == "Sentry" or name:find("Sentry", 1, true) then return "Sentry" end
+    return "Scav"
 end
 
-local function npc_type_allowed(npc_type)
-    if npc_type == "Boss" then return settings.bool("havoc_npc_show_boss", true) end
-    if npc_type == "Sniper" then return settings.bool("havoc_npc_show_sniper", true) end
-    if npc_type == "Scav" then return settings.bool("havoc_npc_show_scav", true) end
+local function npc_type_allowed(npc_type_name)
+    if npc_type_name == "Boss" then return settings.bool("havoc_npc_show_boss", true) end
+    if npc_type_name == "Sniper" then return settings.bool("havoc_npc_show_sniper", true) end
+    if npc_type_name == "Scav" then return settings.bool("havoc_npc_show_scav", true) end
+    if npc_type_name == "Sentry" then return settings.bool("havoc_npc_show_sniper", true) end
     return true
+end
+
+local function dist_sq_cam(cam_pos, pos)
+    local cx = cam_pos.X or cam_pos.x or 0
+    local cy = cam_pos.Y or cam_pos.y or 0
+    local cz = cam_pos.Z or cam_pos.z or 0
+    local px = pos.X or pos.x or 0
+    local py = pos.Y or pos.y or 0
+    local pz = pos.Z or pos.z or 0
+    local dx, dy, dz = px - cx, py - cy, pz - cz
+    return dx * dx + dy * dy + dz * dz
+end
+
+local function live_root_pos(ent)
+    if not ent or not ent.root or not env.is_valid(ent.root) then return nil end
+    local ok, pos = pcall(function() return ent.root.Position end)
+    if ok and pos then
+        ent._live_pos = pos
+        return pos
+    end
+    return ent._live_pos
 end
 
 local function collect_part_positions(ent)
     local part_pos = {}
-    for name, part in pairs(ent.parts) do
+    for name, part in pairs(ent.parts or {}) do
         if env.is_valid(part) then
             local ok, pos = pcall(function() return part.Position end)
             if ok and pos then
@@ -8074,8 +10278,91 @@ local function collect_part_positions(ent)
     return part_pos
 end
 
+local function npc_gpu_active()
+    if not gpu_chams.available() then return false end
+    if not settings.enabled(P) then return false end
+    return settings.bool(CHAMS_GPU, false)
+end
+
+local function collect_npc_chams(applied)
+    local cam_pos
+    if camera and camera.GetPosition then
+        local ok, pos = pcall(camera.GetPosition)
+        if ok then cam_pos = pos end
+    end
+    if not cam_pos then return end
+
+    local max_dist = math.min(settings.num("havoc_npc_max_distance", 1000), 1000)
+    local max_sq = max_dist * max_dist
+    local hide_dead = settings.bool("havoc_npc_hide_dead", false)
+    local cache = entity_scan.get_cache()
+
+    for i = 1, #cache do
+        local ent = cache[i]
+        if not entity_scan.is_entry_valid(ent) then goto continue end
+
+        local health = ent.humanoid.Health or 0
+        if hide_dead and health <= 0 then goto continue end
+
+        local kind = npc_type(ent)
+        if not npc_type_allowed(kind) then goto continue end
+
+        local root_pos = ent._live_pos or live_root_pos(ent)
+        if not root_pos then goto continue end
+        if dist_sq_cam(cam_pos, root_pos) > max_sq then goto continue end
+
+        root_pos = live_root_pos(ent)
+        if not root_pos then goto continue end
+
+        gpu_chams.cham_player_character(ent.model, applied)
+
+        ::continue::
+    end
+end
+
+function M.register_gpu_menu(TAB, G, parent)
+    if not gpu_chams.available() then return {} end
+
+    menu.add_checkbox(TAB, G, CHAMS_GPU, "NPC Engine Chams", false, { parent = parent })
+    gpu_chams.add_mode_color_menu(TAB, G, parent, CHAMS_MODE, CHAMS_COLOR,
+        "NPC Chams Mode", "NPC Chams Color")
+
+    gpu_chams.register_owner("npcs", {
+        rescan_ms = 350,
+        is_active = npc_gpu_active,
+        style = function()
+            return gpu_chams.mode_index(CHAMS_MODE, 0), gpu_chams.color_index(CHAMS_COLOR, 0)
+        end,
+        collect = collect_npc_chams,
+    })
+    gpu_chams.wire_style_controls("npcs", CHAMS_MODE, CHAMS_COLOR)
+
+    local function resync()
+        if npc_gpu_active() then
+            gpu_chams.sync_owner("npcs", true)
+        else
+            gpu_chams.clear_owner("npcs")
+        end
+    end
+    settings.on_change(CHAMS_GPU, resync)
+    settings.on_change(P, resync)
+    settings.on_change("havoc_npc_show_scav", resync)
+    settings.on_change("havoc_npc_show_boss", resync)
+    settings.on_change("havoc_npc_show_sniper", resync)
+    settings.on_change("havoc_npc_hide_dead", resync)
+    settings.on_change("havoc_npc_max_distance", resync)
+
+    return { CHAMS_GPU, CHAMS_MODE, CHAMS_COLOR }
+end
+
+function M.sync_gpu()
+    if npc_gpu_active() then
+        gpu_chams.sync_owner("npcs")
+    end
+end
+
 function M.render(cam_pos)
-    if not settings.enabled("havoc_npc_enabled") then return end
+    if not settings.enabled(P) then return end
 
     local entity_cache = entity_scan.get_cache()
     local n = #entity_cache
@@ -8100,6 +10387,7 @@ function M.render(cam_pos)
     local chams_style = settings.num("havoc_npc_chams_style", 0)
     local hide_dead = settings.bool("havoc_npc_hide_dead", false)
     local max_dist = math.min(settings.num("havoc_npc_max_distance", 1000), 1000)
+    local max_dist_sq = max_dist * max_dist
 
     local name_size = settings.num("havoc_npc_name_size", 13)
     local health_text_size = settings.num("havoc_npc_health_text_size", 8)
@@ -8109,8 +10397,7 @@ function M.render(cam_pos)
     local dist_size = settings.num("havoc_npc_distance_size", 10)
     local npc_type_size = settings.num("havoc_npc_npc_type_size", 9)
 
-    local needs_full_bounds = box_on and box_style == 2
-    local heavy_on = chams_on or skeleton_on or needs_full_bounds
+    local needs_parts = chams_on or skeleton_on or (box_on and box_style == 2)
 
     local esp_opts = {
         box_style = box_style,
@@ -8130,22 +10417,33 @@ function M.render(cam_pos)
 
         if hide_dead and health <= 0 then goto continue_ent end
 
+        local kind = npc_type(ent)
+        if not npc_type_allowed(kind) then goto continue_ent end
+
+        -- Coarse cull on batched live pos, then live HRP for in-range only.
         local root_pos = ent._live_pos
         if not root_pos then
-            local ok_pos, pos = pcall(function() return ent.root.Position end)
-            if not ok_pos or not pos then goto continue_ent end
-            root_pos = pos
+            root_pos = live_root_pos(ent)
         end
+        if not root_pos then goto continue_ent end
 
-        local dist = (cam_pos - root_pos).Magnitude
-        if dist > max_dist then goto continue_ent end
+        if dist_sq_cam(cam_pos, root_pos) > max_dist_sq then goto continue_ent end
+
+        root_pos = live_root_pos(ent)
+        if not root_pos then goto continue_ent end
+
+        local dist = math.sqrt(dist_sq_cam(cam_pos, root_pos))
 
         local bounds = draw_util.get_entity_bounds_fallback(root_pos)
         if not bounds.valid then goto continue_ent end
 
-        if heavy_on then
+        if needs_parts then
             local part_pos = collect_part_positions(ent)
-            if next(part_pos) then
+            if part_pos and next(part_pos) then
+                if box_on and box_style == 2 then
+                    local full = draw_util.get_entity_bounds_from_parts(part_pos, ent.part_size)
+                    if full and full.valid then bounds = full end
+                end
                 if chams_on then
                     draw_util.draw_entity_chams(part_pos, ent.part_size,
                         ent_rgb or settings.color("havoc_npc_chams", { 1, 0.2, 0.2, 0.55 }), chams_style)
@@ -8154,7 +10452,7 @@ function M.render(cam_pos)
                     draw_util.draw_entity_skeleton(part_pos,
                         ent_rgb or settings.color("havoc_npc_skeleton", { 1, 1, 1, 1 }))
                 end
-                if needs_full_bounds then
+                if box_on and box_style == 2 then
                     draw_util.draw_entity_3d_box(part_pos, ent.part_size,
                         ent_rgb or settings.color("havoc_npc_box", { 1, 1, 1, 1 }))
                 end
@@ -8162,14 +10460,20 @@ function M.render(cam_pos)
         end
 
         local name_str = ent.model.Name
-        local npc_type = get_npc_type(ent)
-        if npc_type and not npc_type_allowed(npc_type) then goto continue_ent end
 
-        local held_name = ent._held_name
+        local held_name, ammo_val, reloading_val
+        if held_on or ammo_on or reloading_on then
+            held_name, ammo_val, reloading_val = entity_scan.read_weapon_display(ent)
+        else
+            held_name = ent._held_name
+            ammo_val = ent._ammo_current
+            reloading_val = ent._reloading
+        end
+
         local held_color = held_name and tier_util.get_esp_color(held_name)
             or settings.color("havoc_npc_held_item", { 1, 0.85, 0.4, 1 })
 
-        esp_opts.box = box_on
+        esp_opts.box = box_on and box_style ~= 2
         esp_opts.box_color = ent_rgb or settings.color("havoc_npc_box", { 1, 1, 1, 1 })
         esp_opts.box_fill = fill_on
         esp_opts.box_fill_color = ent_rgb or settings.color("havoc_npc_box_fill", { 1, 1, 1, 0.35 })
@@ -8187,16 +10491,17 @@ function M.render(cam_pos)
         esp_opts.held_item = held_on and held_name or nil
         esp_opts.held_item_slot = held_on
         esp_opts.held_item_color = ent_rgb or held_color
-        esp_opts.npc_type = npc_type
+        esp_opts.npc_type = kind
+        esp_opts.flags = nil
 
         local flags = {}
-        if ammo_on and ent._ammo_current ~= nil then
+        if ammo_on and ammo_val ~= nil then
             flags[#flags + 1] = {
-                text = string.format("Ammo: %s", tostring(ent._ammo_current)),
+                text = string.format("Ammo: %s", tostring(ammo_val)),
                 color = ent_rgb or settings.color("havoc_npc_ammo", { 0.55, 0.85, 1, 1 }),
             }
         end
-        if reloading_on and ent._reloading then
+        if reloading_on and reloading_val then
             flags[#flags + 1] = {
                 text = "RELOADING",
                 color = ent_rgb or settings.color("havoc_npc_reloading", { 1, 0.45, 0.2, 1 }),
@@ -8217,18 +10522,35 @@ return M
 
 end)()
 
+-- ── features/visuals/loot_esp.lua ──
 July._mods["features.visuals.loot_esp"] = (function()
 local settings = July.require("core.settings")
 local color_util = July.require("core.color_util")
 local draw_util = July.require("core.draw_util")
 local loot_scan = July.require("game.loot_scan")
 local loot_catalog = July.require("game.loot_catalog")
+local item_esp_catalog = July.require("game.item_esp_catalog")
 local tier_util = July.require("game.tier_util")
 local esp_scan = July.require("game.esp_scan")
 local esp_util = July.require("core.esp_util")
+local esp_render = July.require("core.esp_render")
 local env = July.require("core.env")
+local gpu_chams = July.require("core.gpu_chams")
 
 local M = {}
+
+local P = "havoc_loot_enabled"
+local CHAMS_ID = "havoc_loot_gpu_chams"
+local CHAMS_MODE = "havoc_loot_gpu_chams_mode"
+local CHAMS_COLOR = "havoc_loot_gpu_chams_color"
+
+local candidates = {}
+
+local function clear_candidates()
+    for i = 1, #candidates do
+        candidates[i] = nil
+    end
+end
 
 local function loot_passes_filter(filter_idx, is_open_val, is_locked_val, is_drop)
     if is_drop then
@@ -8249,11 +10571,112 @@ local function cam_xyz(cam_pos)
     return cam_pos.X or cam_pos.x or 0, cam_pos.Y or cam_pos.y or 0, cam_pos.Z or cam_pos.z or 0
 end
 
-function M.render(cam_pos)
-    if not settings.enabled("havoc_loot_enabled") then return end
+local function loot_chams_labels()
+    return loot_catalog.MULTICOMBO_LABELS
+end
 
-    local loot_cache = loot_scan.get_cache()
-    local n = #loot_cache
+local function loot_chams_active()
+    if not gpu_chams.available() then return false end
+    if not settings.enabled(P) then return false end
+    local labels = loot_chams_labels()
+    for i = 1, #labels do
+        if gpu_chams.multicombo_selected(CHAMS_ID, i) then
+            return true
+        end
+    end
+    return false
+end
+
+local function collect_loot_chams(applied)
+    local cam_pos
+    if camera and camera.GetPosition then
+        local ok, pos = pcall(camera.GetPosition)
+        if ok then cam_pos = pos end
+    end
+    if not cam_pos then return end
+
+    local cx, cy, cz = cam_xyz(cam_pos)
+    local max_dist = settings.num("havoc_loot_max_distance", 500)
+    local max_sq = max_dist * max_dist
+    local draw_cache = loot_scan.get_cache()
+
+    for i = 1, #draw_cache do
+        local entry = draw_cache[i]
+        local category = entry and entry.category
+        if not entry or not category or not loot_catalog.is_enabled(category) then
+            goto continue
+        end
+        if entry.is_drop or item_esp_catalog.is_drop_category(category) then goto continue end
+        if not env.is_valid(entry.inst or entry.model) then goto continue end
+
+        local idx = loot_catalog.KEY_TO_INDEX[category.key]
+        if not idx or not gpu_chams.multicombo_selected(CHAMS_ID, idx) then
+            goto continue
+        end
+
+        local lx, ly, lz = esp_scan.entry_coords(entry)
+        if not lx then goto continue end
+        local dx, dy, dz = lx - cx, ly - cy, lz - cz
+        if (dx * dx + dy * dy + dz * dz) > max_sq then goto continue end
+
+        gpu_chams.cham_entry_part(entry, applied)
+
+        ::continue::
+    end
+end
+
+function M.register_gpu_menu(TAB, G, parent)
+    if not gpu_chams.available() then return {} end
+
+    local labels = loot_chams_labels()
+    menu.add_multicombo(TAB, G, CHAMS_ID, "Loot Engine Chams", labels,
+        gpu_chams.multicombo_defaults(#labels), { parent = parent })
+    gpu_chams.add_mode_color_menu(TAB, G, parent, CHAMS_MODE, CHAMS_COLOR,
+        "Loot Chams Mode", "Loot Chams Color")
+
+    gpu_chams.register_owner("loot", {
+        rescan_ms = 500,
+        is_active = loot_chams_active,
+        style = function()
+            return gpu_chams.mode_index(CHAMS_MODE, 0), gpu_chams.color_index(CHAMS_COLOR, 0)
+        end,
+        collect = collect_loot_chams,
+    })
+    gpu_chams.wire_style_controls("loot", CHAMS_MODE, CHAMS_COLOR)
+
+    local function resync()
+        if loot_chams_active() then
+            gpu_chams.sync_owner("loot", true)
+        else
+            gpu_chams.clear_owner("loot")
+        end
+    end
+    settings.on_change(CHAMS_ID, resync)
+    settings.on_change(P, resync)
+    for i = 1, #loot_catalog.MULTICOMBO_ENTRIES do
+        local entry = loot_catalog.MULTICOMBO_ENTRIES[i]
+        if entry and entry.key then
+            settings.on_change(entry.key, resync)
+        end
+    end
+
+    return { CHAMS_ID, CHAMS_MODE, CHAMS_COLOR }
+end
+
+function M.sync_gpu()
+    if loot_chams_active() then
+        gpu_chams.sync_owner("loot")
+    end
+end
+
+function M.update()
+end
+
+function M.render(cam_pos)
+    if not settings.enabled(P) then return end
+
+    local draw_cache = loot_scan.get_cache()
+    local n = #draw_cache
     if n == 0 then return end
 
     local constants = July.require("core.constants")
@@ -8263,21 +10686,25 @@ function M.render(cam_pos)
     local show_marker = settings.bool("havoc_loot_marker", false)
     local box_on = settings.bool("havoc_loot_box", false)
     local box_style = settings.num("havoc_loot_box_style", 2)
-    local draw_3d = box_on and box_style == 2
     local max_dist = settings.num("havoc_loot_max_distance", 500)
     local filter_idx = settings.num("havoc_loot_filter", 0)
     local text_size = settings.num("havoc_loot_text_size", 13)
     local loot_rgb = settings.bool("havoc_loot_rainbow", false) and color_util.rainbow_color(0.3) or nil
     local max_dist_sq = max_dist * max_dist
     local hide_sq = constants.ESP_HIDE_SQ or 9
+    local budget = constants.ESP_RENDER_BUDGET or 100
     local cx, cy, cz = cam_xyz(cam_pos)
 
+    clear_candidates()
+    local count = 0
+
     for i = 1, n do
-        local entry = loot_cache[i]
+        local entry = draw_cache[i]
         local category = entry and entry.category
         if not entry or not category or not loot_catalog.is_enabled(category) then
             goto continue
         end
+        if entry.is_drop or item_esp_catalog.is_drop_category(category) then goto continue end
         if not env.is_valid(entry.model) then goto continue end
         if not loot_passes_filter(filter_idx, entry.is_open, entry.is_locked, entry.is_drop) then
             goto continue
@@ -8291,7 +10718,29 @@ function M.render(cam_pos)
         if dist_sq > max_dist_sq then goto continue end
         if not entry.is_drop and dist_sq <= hide_sq then goto continue end
 
-        local dist = math.sqrt(dist_sq)
+        count = count + 1
+        candidates[count] = {
+            entry = entry,
+            category = category,
+            lx = lx,
+            ly = ly,
+            lz = lz,
+            dist_sq = dist_sq,
+        }
+
+        ::continue::
+    end
+
+    if count == 0 then return end
+
+    local draw_list = esp_render.pick_closest(candidates, budget)
+
+    for i = 1, #draw_list do
+        local item = draw_list[i]
+        local entry = item.entry
+        local category = item.category
+        local lx, ly, lz = item.lx, item.ly, item.lz
+        local dist = math.sqrt(item.dist_sq)
 
         local base_color
         if entry.is_drop then
@@ -8301,8 +10750,8 @@ function M.render(cam_pos)
         end
         local box_color = loot_rgb or settings.color("havoc_loot_box", base_color)
 
-        if draw_3d then
-            esp_util.draw_entry_boxes(entry, box_color, 1)
+        if box_on then
+            esp_util.draw_entry_boxes(entry, box_color, 1, box_style)
         end
 
         local sx, sy, vis = esp_util.w2s(lx, ly, lz)
@@ -8323,6 +10772,203 @@ return M
 
 end)()
 
+-- ── features/visuals/item_esp.lua ──
+July._mods["features.visuals.item_esp"] = (function()
+local settings = July.require("core.settings")
+local color_util = July.require("core.color_util")
+local draw_util = July.require("core.draw_util")
+local loot_scan = July.require("game.loot_scan")
+local item_esp_catalog = July.require("game.item_esp_catalog")
+local tier_util = July.require("game.tier_util")
+local esp_scan = July.require("game.esp_scan")
+local esp_util = July.require("core.esp_util")
+local esp_render = July.require("core.esp_render")
+local env = July.require("core.env")
+local item_categories = July.require("game.item_categories")
+local menu_util = July.require("core.menu_util")
+
+local M = {}
+
+local P = "havoc_item_enabled"
+local candidates = {}
+
+local function clear_candidates()
+    for i = 1, #candidates do
+        candidates[i] = nil
+    end
+end
+
+local function cam_xyz(cam_pos)
+    if not cam_pos then return 0, 0, 0 end
+    return cam_pos.X or cam_pos.x or 0, cam_pos.Y or cam_pos.y or 0, cam_pos.Z or cam_pos.z or 0
+end
+
+function M.register_menu(TAB, G)
+    local ids = {}
+    menu_util.register_keybind(TAB, G, P, "Enable Item ESP", false)
+
+    menu.add_checkbox(TAB, G, "havoc_item_show_guns", "Show Dropped Guns", true, { parent = P })
+    menu.add_checkbox(TAB, G, "havoc_item_show_keycards", "Show Keycards", true, { parent = P })
+    menu.add_checkbox(TAB, G, "havoc_item_show_body_bags", "Show Body Bags", true, { parent = P })
+
+    for si = 1, #item_categories.SECTIONS do
+        local sec = item_categories.SECTIONS[si]
+        local labels = sec.items or {}
+        local defaults = {}
+        for i = 1, #labels do
+            defaults[i] = true
+        end
+        local mcb_id = item_esp_catalog.section_multicombo_id(sec.id)
+        menu.add_multicombo(TAB, G, mcb_id, sec.label, labels, defaults, { parent = P })
+        ids[#ids + 1] = mcb_id
+
+        for ii = 1, #labels do
+            local color_id = item_esp_catalog.item_color_id(sec.id, ii)
+            local default = item_esp_catalog.SECTION_COLORS[sec.id] or { 1, 1, 1, 1 }
+            menu.add_colorpicker(TAB, G, color_id, labels[ii], default, { parent = P })
+            menu_util.COLOR_DEFAULTS[color_id] = default
+            ids[#ids + 1] = color_id
+        end
+    end
+
+    menu.add_checkbox(TAB, G, "havoc_item_box", "Item Box", false,
+        { parent = P, colorpicker = { 1.0, 1.0, 1.0, 1.0 } })
+    menu.add_combo(TAB, G, "havoc_item_box_style", "Item Box Style",
+        { "Corners", "Outline", "3D Box" }, 2, { parent = P })
+    menu.add_checkbox(TAB, G, "havoc_item_distance", "Item Show Distance", false, { parent = P })
+    menu.add_combo(TAB, G, "havoc_item_distance_pos", "Item Distance Position",
+        { "Same Line", "Below Name", "Left Of Name", "Right Of Name" }, 0, { parent = P })
+    menu.add_checkbox(TAB, G, "havoc_item_marker", "Item Position Marker", false, { parent = P })
+    menu.add_checkbox(TAB, G, "havoc_item_rainbow", "Item Rainbow", false, { parent = P })
+    menu.add_slider_int(TAB, G, "havoc_item_text_size", "Item Text Size", 1, 15, 13, { parent = P })
+    menu.add_slider_int(TAB, G, "havoc_item_max_distance", "Item Max Distance", 0, 2000, 500, { parent = P })
+
+    ids[#ids + 1] = "havoc_item_show_guns"
+    ids[#ids + 1] = "havoc_item_show_keycards"
+    ids[#ids + 1] = "havoc_item_show_body_bags"
+    ids[#ids + 1] = "havoc_item_box"
+    ids[#ids + 1] = "havoc_item_box_style"
+    ids[#ids + 1] = "havoc_item_distance"
+    ids[#ids + 1] = "havoc_item_distance_pos"
+    ids[#ids + 1] = "havoc_item_marker"
+    ids[#ids + 1] = "havoc_item_rainbow"
+    ids[#ids + 1] = "havoc_item_text_size"
+    ids[#ids + 1] = "havoc_item_max_distance"
+    ids[#ids + 1] = P .. "_mode"
+
+    menu_util.bind_children(P, ids)
+    menu_util.bind_children("havoc_item_box", { "havoc_item_box_style" })
+    menu_util.bind_children("havoc_item_distance", { "havoc_item_distance_pos" })
+
+    return ids
+end
+
+function M.update()
+end
+
+function M.render(cam_pos)
+    if not settings.enabled(P) then return end
+
+    local base_drops = loot_scan.get_drops()
+    local show_bags = settings.bool("havoc_item_show_body_bags", true)
+    local draw_drops = base_drops
+    if show_bags then
+        draw_drops = {}
+        for i = 1, #base_drops do
+            draw_drops[i] = base_drops[i]
+        end
+        local static = loot_scan.get_cache()
+        for i = 1, #static do
+            local entry = static[i]
+            local cat = entry and entry.category
+            if entry and cat and cat.loot_type == "body.bag" and not entry.is_drop then
+                draw_drops[#draw_drops + 1] = entry
+            end
+        end
+    end
+
+    local n = #draw_drops
+    if n == 0 then return end
+
+    local constants = July.require("core.constants")
+    local show_dist = settings.bool("havoc_item_distance", false)
+    local dist_pos = settings.num("havoc_item_distance_pos", 0)
+    local show_marker = settings.bool("havoc_item_marker", false)
+    local box_on = settings.bool("havoc_item_box", false)
+    local box_style = settings.num("havoc_item_box_style", 2)
+    local max_dist = settings.num("havoc_item_max_distance", 500)
+    local text_size = settings.num("havoc_item_text_size", 13)
+    local item_rgb = settings.bool("havoc_item_rainbow", false) and color_util.rainbow_color(0.3) or nil
+    local max_dist_sq = max_dist * max_dist
+    local budget = constants.ESP_RENDER_BUDGET or 80
+    local cx, cy, cz = cam_xyz(cam_pos)
+
+    clear_candidates()
+    local count = 0
+
+    for i = 1, n do
+        local entry = draw_drops[i]
+        local category = entry and entry.category
+        if not entry or not category then goto continue end
+        if not ((entry.root and env.is_valid(entry.root)) or (entry.inst and env.is_valid(entry.inst))) then
+            goto continue
+        end
+
+        local name = entry.display_name or category.display
+        if not item_esp_catalog.is_item_enabled(name, category) then goto continue end
+
+        local lx, ly, lz = esp_scan.entry_coords(entry)
+        if not lx then goto continue end
+
+        local dx, dy, dz = lx - cx, ly - cy, lz - cz
+        local dist_sq = dx * dx + dy * dy + dz * dz
+        if dist_sq > max_dist_sq then goto continue end
+
+        count = count + 1
+        candidates[count] = {
+            entry = entry,
+            name = name,
+            lx = lx,
+            ly = ly,
+            lz = lz,
+            dist_sq = dist_sq,
+        }
+
+        ::continue::
+    end
+
+    if count == 0 then return end
+
+    local draw_list = esp_render.pick_closest(candidates, budget)
+
+    for i = 1, #draw_list do
+        local item = draw_list[i]
+        local entry = item.entry
+        local lx, ly, lz = item.lx, item.ly, item.lz
+        local dist = math.sqrt(item.dist_sq)
+        local base_color = item_rgb or item_esp_catalog.get_item_color(item.name)
+        local box_color = item_rgb or settings.color("havoc_item_box", base_color)
+
+        if box_on then
+            esp_util.draw_entry_boxes(entry, box_color, 1, box_style)
+        end
+
+        local sx, sy, vis = esp_util.w2s(lx, ly, lz)
+        if not vis then goto continue end
+
+        local label = tier_util.get_item_label(item.name)
+        draw_util.draw_loot_label(sx, sy, label, false, dist, show_dist, base_color,
+            dist_pos, show_marker, text_size)
+
+        ::continue::
+    end
+end
+
+return M
+
+end)()
+
+-- ── features/visuals/trap_esp.lua ──
 July._mods["features.visuals.trap_esp"] = (function()
 local settings = July.require("core.settings")
 local color_util = July.require("core.color_util")
@@ -8330,6 +10976,8 @@ local draw_util = July.require("core.draw_util")
 local trap_scan = July.require("game.trap_scan")
 local trap_types = July.require("game.trap_types")
 local esp_render = July.require("core.esp_render")
+local esp_scan = July.require("game.esp_scan")
+local esp_util = July.require("core.esp_util")
 local env = July.require("core.env")
 
 local M = {}
@@ -8357,8 +11005,22 @@ local function draw_trap_box(trap, color, box_style)
         return
     end
 
-    if trap.pos then
-        local bounds = draw_util.get_entity_bounds_fallback(trap.pos)
+    local box = esp_scan.read_part_box(trap.root)
+    if box then
+        local bounds = esp_util.project_oriented_box(box)
+        if bounds and bounds.valid then
+            if box_style == 0 and draw.CornerBox then
+                draw.CornerBox(bounds.x, bounds.y, bounds.w, bounds.h, color)
+            elseif draw.Rect then
+                draw.Rect(bounds.x, bounds.y, bounds.w, bounds.h, color)
+            end
+            return
+        end
+    end
+
+    local pos = trap.pos
+    if pos then
+        local bounds = draw_util.get_entity_bounds_fallback(pos)
         if bounds.valid then
             if box_style == 0 then
                 draw.CornerBox(bounds.x, bounds.y, bounds.w, bounds.h, color)
@@ -8367,6 +11029,9 @@ local function draw_trap_box(trap, color, box_style)
             end
         end
     end
+end
+
+function M.update()
 end
 
 function M.render(cam_pos)
@@ -8394,9 +11059,11 @@ function M.render(cam_pos)
         local trap = trap_cache[i]
         if not trap.root or not env.is_valid(trap.root) then goto continue end
         if not trap_types.is_enabled(trap.trap_type) then goto continue end
-        if not trap.pos then goto continue end
 
-        local dsq = dist_sq(cam_pos, trap.pos)
+        local pos = trap.pos
+        if not pos then goto continue end
+
+        local dsq = dist_sq(cam_pos, pos)
         if dsq > max_dist_sq then goto continue end
 
         count = count + 1
@@ -8416,6 +11083,7 @@ function M.render(cam_pos)
         local entry = draw_list[i]
         local trap = entry.trap
         local pos = trap.pos
+        if not pos then goto continue_draw end
         local dist = math.sqrt(entry.dist_sq)
 
         local sx, sy, sok = esp_render.w2s(pos.X or pos.x, pos.Y or pos.y, pos.Z or pos.z)
@@ -8451,6 +11119,7 @@ return M
 
 end)()
 
+-- ── features/visuals/aimbot_visuals.lua ──
 July._mods["features.visuals.aimbot_visuals"] = (function()
 local settings = July.require("core.settings")
 local color_util = July.require("core.color_util")
@@ -8491,6 +11160,7 @@ return M
 
 end)()
 
+-- ── features/visuals/local_weapon_hud.lua ──
 July._mods["features.visuals.local_weapon_hud"] = (function()
 local settings = July.require("core.settings")
 local targeting = July.require("features.combat.targeting")
@@ -8534,6 +11204,7 @@ return M
 
 end)()
 
+-- ── features/visuals/target_gear_viewer.lua ──
 July._mods["features.visuals.target_gear_viewer"] = (function()
 local settings = July.require("core.settings")
 local math_util = July.require("core.math_util")
@@ -8543,6 +11214,8 @@ local entity_scan = July.require("game.entity_scan")
 local targeting = July.require("features.combat.targeting")
 local aimbot = July.require("features.combat.aimbot")
 local env = July.require("core.env")
+local havoc_icons = July.require("game.havoc_icons")
+local image_cache = July.require("core.image_cache")
 
 local M = {}
 
@@ -8558,16 +11231,10 @@ local last_poll_ms = 0
 M._target = nil
 M._layout = nil
 
-local PANEL_BG = { 0.06, 0.06, 0.08, 0.82 }
-local PANEL_EDGE = { 1, 1, 1, 0.1 }
-local HELD_BG = { 0.45, 0.1, 0.12, 0.92 }
-local HELD_EDGE = { 0.95, 0.28, 0.32, 0.75 }
-local ITEM_BG = { 0.14, 0.14, 0.16, 0.88 }
-local ITEM_EDGE = { 1, 1, 1, 0.08 }
-local SLOT_MUTED = { 0.5, 0.5, 0.54, 0.85 }
-local TEXT_MAIN = { 0.94, 0.94, 0.96, 1 }
-local TEXT_DIM = { 0.55, 0.55, 0.58, 0.9 }
-local ROUND = 6
+local TEXT_MAIN = { 0.96, 0.96, 0.98, 1 }
+local TEXT_DIM = { 0.58, 0.58, 0.62, 0.92 }
+local SLOT_MUTED = { 0.62, 0.62, 0.66, 0.88 }
+local HELD_TINT = { 1.0, 0.42, 0.45, 1.0 }
 
 local SLOT_LABELS = {
     helmet = "Helmet",
@@ -8789,15 +11456,17 @@ local function build_layout(gear)
     local stash = is_npc and {} or pack_stash(gear and gear.stash)
 
     local rows = {}
-    local panel_w = 220
+    local icon_size = settings.num(P .. "_gear_size", 48)
+    local row_h = math.max(18, icon_size * 0.42)
 
     if held then
         rows[#rows + 1] = {
             kind = "held",
             label = "Held",
             text = piece_label(held) or "Unknown",
+            piece = held,
+            row_h = row_h + 2,
         }
-        panel_w = math.max(panel_w, text_w(rows[#rows].text, 11) + 56)
     end
 
     if not is_npc then
@@ -8805,87 +11474,46 @@ local function build_layout(gear)
             local slot_id = order[i]
             local piece = slots[slot_id]
             if piece then
-                local text = piece_label(piece) or "Unknown"
                 rows[#rows + 1] = {
                     kind = "gear",
                     label = SLOT_LABELS[slot_id] or slot_id,
-                    text = text,
+                    text = piece_label(piece) or "Unknown",
+                    piece = piece,
+                    row_h = row_h,
                 }
-                panel_w = math.max(panel_w, text_w(text, 10) + 88)
             end
         end
 
         for i = 1, #extra do
-            local text = piece_label(extra[i]) or "Unknown"
+            local piece = extra[i]
             rows[#rows + 1] = {
                 kind = "gear",
                 label = "Extra",
-                text = text,
+                text = piece_label(piece) or "Unknown",
+                piece = piece,
+                row_h = row_h,
             }
-            panel_w = math.max(panel_w, text_w(text, 10) + 88)
         end
 
         for i = 1, #stash do
-            local text = piece_label(stash[i]) or "Unknown"
+            local piece = stash[i]
             rows[#rows + 1] = {
                 kind = "stash",
                 label = "Bag",
-                text = text,
+                text = piece_label(piece) or "Unknown",
+                piece = piece,
+                row_h = row_h,
             }
-            panel_w = math.max(panel_w, text_w(text, 10) + 72)
         end
     end
 
     return {
         is_npc = is_npc,
         rows = rows,
-        panel_w = math.min(math.max(panel_w, 200), 420),
+        icon_size = icon_size,
+        row_h = row_h,
         has_held = held ~= nil,
     }
-end
-
-local function draw_pill(x, y, w, h, bg, edge)
-    draw.rect_filled(x, y, w, h, bg, ROUND)
-    if draw.rect and edge then
-        draw.rect(x, y, w, h, edge, ROUND, 1)
-    end
-end
-
-local function draw_row(cx, y, row, panel_w)
-    local pad_x = 10
-    local row_h = row.kind == "held" and 26 or 22
-    local label_fs = row.kind == "held" and 10 or 9
-    local text_fs = row.kind == "held" and 11 or 10
-    local row_w = panel_w
-    local row_x = cx - row_w * 0.5
-
-    local bg = ITEM_BG
-    local edge = ITEM_EDGE
-    if row.kind == "held" then
-        bg = HELD_BG
-        edge = HELD_EDGE
-    end
-
-    draw_pill(row_x, y, row_w, row_h, bg, edge)
-
-    local label = row.label .. ":"
-    draw.text(row_x + pad_x, y + (row_h - label_fs) * 0.5, label, SLOT_MUTED, label_fs)
-
-    local label_w = text_w(label, label_fs)
-    local text = row.text
-    local tw = text_w(text, text_fs)
-    local max_text_w = row_w - pad_x * 2 - label_w - 8
-    if tw > max_text_w and #text > 3 then
-        while tw > max_text_w and #text > 3 do
-            text = text:sub(1, #text - 1)
-            tw = text_w(text .. "…", text_fs)
-        end
-        text = text .. "…"
-        tw = text_w(text, text_fs)
-    end
-
-    draw.text(row_x + row_w - pad_x - tw, y + (row_h - text_fs) * 0.5, text, TEXT_MAIN, text_fs)
-    return row_h + 4
 end
 
 local function same_target(a, b)
@@ -8903,7 +11531,41 @@ local function target_display_name(target)
     return p.display_name or p.DisplayName or p.Name or p.name or "Player"
 end
 
-function M.register_menu()
+local function draw_icon(x, y, size, piece)
+    if not piece or not piece.name then return 0 end
+    local asset_id = havoc_icons.lookup(piece.name, piece.variant)
+    if not asset_id then return 0 end
+    local key = "gear_" .. tostring(asset_id)
+    image_cache.ensure(key, asset_id)
+    if image_cache.draw_fit(key, x, y, size, size) then
+        return size + 6
+    end
+    return 0
+end
+
+local function draw_row(cx, y, row, layout)
+    local icon_size = layout.icon_size
+    local row_h = row.row_h or layout.row_h
+    local label_fs = row.kind == "held" and 10 or 9
+    local text_fs = row.kind == "held" and 12 or 11
+    local label_col = row.kind == "held" and HELD_TINT or SLOT_MUTED
+    local text_col = TEXT_MAIN
+
+    local text = row.text
+    local tw = text_w(text, text_fs)
+    local total_w = icon_size + 8 + tw + 40
+    local start_x = cx - total_w * 0.5
+
+    local icon_off = draw_icon(start_x, y + (row_h - icon_size) * 0.5, icon_size, row.piece)
+    local text_x = start_x + (icon_off > 0 and icon_off or icon_size + 6)
+
+    draw.text(text_x, y + (row_h - text_fs) * 0.5, text, text_col, text_fs)
+
+    local label = row.label
+    local lw = text_w(label, label_fs)
+    draw.text(text_x + tw + 10, y + (row_h - label_fs) * 0.5, label, label_col, label_fs)
+
+    return row_h + 6
 end
 
 function M.refresh_target()
@@ -8953,7 +11615,7 @@ end
 
 function M.draw()
     if not settings.bool(P, false) then return end
-    if not draw or not draw.text or not draw.rect_filled then return end
+    if not draw or not draw.text then return end
 
     local target = M._target
     local layout = M._layout
@@ -8962,36 +11624,22 @@ function M.draw()
     local sw, _ = screen_size()
     local top = settings.num(P .. "_top", 88)
     local cx = sw * 0.5
-    local name_fs = 12
     local name = target_display_name(target)
-    local panel_w = layout.panel_w
-    local header_h = name_fs + 14
-    local rows_h = 0
-    for i = 1, #layout.rows do
-        rows_h = rows_h + (layout.rows[i].kind == "held" and 30 or 26)
-    end
-    if #layout.rows == 0 then
-        rows_h = 22
-    end
-    local panel_h = header_h + rows_h + 10
-    local panel_x = cx - panel_w * 0.5
-    local panel_y = top
-
-    draw_pill(panel_x, panel_y, panel_w, panel_h, PANEL_BG, PANEL_EDGE)
+    local name_fs = 13
 
     local nw = text_w(name, name_fs)
-    draw.text(cx - nw * 0.5, panel_y + 6, name, TEXT_MAIN, name_fs)
+    draw.text(cx - nw * 0.5, top, name, TEXT_MAIN, name_fs)
 
-    local y = panel_y + header_h
+    local y = top + name_fs + 10
     if #layout.rows == 0 then
         local hint = layout.is_npc and "No held weapon" or "No gear detected"
         local hw = text_w(hint, 10)
-        draw.text(cx - hw * 0.5, y + 4, hint, TEXT_DIM, 10)
+        draw.text(cx - hw * 0.5, y, hint, TEXT_DIM, 10)
         return
     end
 
     for i = 1, #layout.rows do
-        y = y + draw_row(cx, y, layout.rows[i], panel_w - 16)
+        y = y + draw_row(cx, y, layout.rows[i], layout)
     end
 end
 
@@ -8999,6 +11647,7 @@ return M
 
 end)()
 
+-- ── menu/tabs.lua ──
 July._mods["menu.tabs"] = (function()
 local constants = July.require("core.constants")
 local settings = July.require("core.settings")
@@ -9013,6 +11662,8 @@ local trap_esp = July.require("features.visuals.trap_esp")
 local aimbot_visuals = July.require("features.visuals.aimbot_visuals")
 local local_weapon_hud = July.require("features.visuals.local_weapon_hud")
 local target_gear_viewer = July.require("features.visuals.target_gear_viewer")
+local item_esp = July.require("features.visuals.item_esp")
+local exploits = July.require("features.misc.exploits")
 
 local M = {}
 M._menu_registered = false
@@ -9048,6 +11699,12 @@ function M.update()
 
     esp_scheduler.tick(frame_counter)
 
+    loot_esp.update()
+    trap_esp.update()
+    item_esp.update()
+
+    exploits.tick()
+
     if settings.bool("havoc_aimbot_enabled", false) then
         aimbot.update_visuals()
         if settings.enabled("havoc_aimbot_keybind") then
@@ -9075,7 +11732,14 @@ function M.update()
 
     npc_esp.render(cam_pos)
     loot_esp.render(cam_pos)
+    item_esp.render(cam_pos)
     trap_esp.render(cam_pos)
+
+    if frame_counter % 3 == 0 then
+        npc_esp.sync_gpu()
+        loot_esp.sync_gpu()
+    end
+
     aimbot_visuals.render()
     local_weapon_hud.render()
     target_gear_viewer.draw()
@@ -9085,6 +11749,7 @@ return M
 
 end)()
 
+-- ── app.lua ──
 July._mods["app"] = (function()
 local tabs = July.require("menu.tabs")
 local debug = July.require("core.debug")

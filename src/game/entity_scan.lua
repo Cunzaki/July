@@ -252,60 +252,75 @@ local function get_held_weapon_name(model)
     return name
 end
 
-local function refresh_weapon_state(ent)
-    local _, weapon = get_held_weapon_inst(ent.model)
-    if not weapon then
-        ent._ammo_current = nil
-        ent._reloading = nil
-        return
-    end
+local HELD_EMPTY_CLEAR_TICKS = 45
+local WEAPON_STATE_CLEAR_TICKS = 45
+
+local function read_weapon_values(weapon)
+    local ammo_current, reloading = nil, nil
 
     local data = env.find_child(weapon, "_data")
     if not data then
-        ent._ammo_current = nil
-        ent._reloading = nil
-        return
+        return ammo_current, reloading
     end
 
     local ammo = env.find_child(data, "ammoCurrent")
     if ammo then
         local ok, value = pcall(function() return ammo.Value end)
-        ent._ammo_current = ok and value or nil
-    else
-        ent._ammo_current = nil
+        ammo_current = ok and value or nil
     end
 
     local reload = env.find_child(data, "reload")
     if reload then
-        local reloading = env.find_child(reload, "reloading")
-        if reloading then
-            local ok, value = pcall(function() return reloading.Value end)
-            ent._reloading = ok and value == true or false
-        else
-            ent._reloading = nil
+        local reloading_inst = env.find_child(reload, "reloading")
+        if reloading_inst then
+            local ok, value = pcall(function() return reloading_inst.Value end)
+            reloading = ok and value == true or false
         end
-    else
-        ent._reloading = nil
     end
+
+    return ammo_current, reloading
 end
 
-local HELD_EMPTY_CLEAR_TICKS = 45
-
-local function refresh_held_name(ent)
-    local new_held = get_held_weapon_name(ent.model)
-    if new_held and new_held ~= "" then
-        ent._held_name = new_held
+local function refresh_weapon_state(ent)
+    local name, weapon = get_held_weapon_inst(ent.model)
+    if name and name ~= "" and weapon then
+        ent._held_name = name
         ent._held_empty_ticks = 0
+        ent._weapon_empty_ticks = 0
+        ent._ammo_current, ent._reloading = read_weapon_values(weapon)
         return
     end
 
-    if ent._held_name then
-        ent._held_empty_ticks = (ent._held_empty_ticks or 0) + 1
-        if ent._held_empty_ticks >= HELD_EMPTY_CLEAR_TICKS then
-            ent._held_name = nil
-            ent._held_empty_ticks = 0
-        end
+    ent._weapon_empty_ticks = (ent._weapon_empty_ticks or 0) + 1
+    if ent._weapon_empty_ticks >= WEAPON_STATE_CLEAR_TICKS then
+        ent._held_name = nil
+        ent._ammo_current = nil
+        ent._reloading = nil
+        ent._weapon_empty_ticks = 0
+        ent._held_empty_ticks = 0
     end
+end
+
+local function refresh_held_name(ent)
+    refresh_weapon_state(ent)
+end
+
+-- Live read for draw frame; keeps last good values on transient misses (no flicker).
+function M.read_weapon_display(ent)
+    if not ent or not ent.model then
+        return ent and ent._held_name, ent and ent._ammo_current, ent and ent._reloading
+    end
+
+    local name, weapon = get_held_weapon_inst(ent.model)
+    if name and name ~= "" and weapon then
+        ent._held_name = name
+        ent._held_empty_ticks = 0
+        ent._weapon_empty_ticks = 0
+        ent._ammo_current, ent._reloading = read_weapon_values(weapon)
+        return ent._held_name, ent._ammo_current, ent._reloading
+    end
+
+    return ent._held_name, ent._ammo_current, ent._reloading
 end
 
 function M.refresh_live()

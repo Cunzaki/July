@@ -1,0 +1,17 @@
+{
+  "name": "vector-local-mcp",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Local MCP for Vector API.md + Havoc/Fallen game dumps (complements GitBook MCP)",
+  "bin": {
+    "vector-local-mcp": "./server.mjs"
+  },
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^4.4.3"
+  }
+}
